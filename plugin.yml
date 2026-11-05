@@ -1,8 +1,8 @@
 name: AZVanillaMobs
-version: 1.0.0
+version: 1.0.1
 main: BeeAZ\AZVanillaMobs\Main
 api: 5.0.0
-author: BeeAZ
+authors: [BeeAZ, BronzWarq]
 description: Absolute performance optimized Vanilla Mobs system!
 permissions:
   azvanillamobs.command.summon:

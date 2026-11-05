@@ -3,6 +3,7 @@
 
 # Map your worlds to their specific dimension type (overworld, nether, the_end)
 worlds:
+  "world": "overworld"
   "skyblock": "overworld"
   "normal": "overworld"
   "nether": "nether"

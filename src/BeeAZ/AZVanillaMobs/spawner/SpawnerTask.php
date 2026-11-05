@@ -9,6 +9,7 @@ use pocketmine\Server;
 use pocketmine\world\Position;
 use pocketmine\world\World;
 use pocketmine\entity\Location;
+use BeeAZ\AZVanillaMobs\entity\BaseMob;
 
 class SpawnerTask extends Task
 {
@@ -34,7 +35,7 @@ class SpawnerTask extends Task
 
         $totalMobs = 0;
         foreach (Server::getInstance()->getWorldManager()->getWorlds() as $world) {
-            $totalMobs += count($world->getEntities());
+            $totalMobs += $this->countWorldMobs($world);
         }
 
         if ($totalMobs >= $globalCap) return;
@@ -48,13 +49,25 @@ class SpawnerTask extends Task
             $players = $world->getPlayers();
             if (empty($players)) continue;
 
-            if (count($world->getEntities()) >= $perWorldCap) continue;
+            $worldMobs = $this->countWorldMobs($world);
+            if ($worldMobs >= $perWorldCap) continue;
 
             foreach ($players as $player) {
-
-                $this->attemptSpawn($player->getPosition(), $dimensionType);
+                if ($totalMobs >= $globalCap || $worldMobs >= $perWorldCap) break;
+                if ($this->attemptSpawn($player->getPosition(), $dimensionType)) {
+                    ++$totalMobs;
+                    ++$worldMobs;
+                }
             }
         }
+    }
+
+    private function countWorldMobs(World $world): int {
+        $count = 0;
+        foreach ($world->getEntities() as $entity) {
+            if ($entity instanceof BaseMob && !$entity->isFlaggedForDespawn()) ++$count;
+        }
+        return $count;
     }
 
     private function getEntityTypeCount(string $entityClass): int {
@@ -79,10 +92,10 @@ class SpawnerTask extends Task
             for ($dz = -2; $dz <= 2; $dz++) {
                 $className = get_class($world->getBlockAt($x + $dx, $y, $z + $dz));
 
-                if ($className === '\\pocketmine\\block\\Sand' || $className === '\\pocketmine\\block\\RedSand') {
+                if ($className === 'pocketmine\\block\\Sand' || $className === 'pocketmine\\block\\RedSand') {
                     $sandCount++;
                     if ($sandCount > 12) return 'desert';
-                } else if ($className === '\\pocketmine\\block\\Snow' || $className === '\\pocketmine\\block\\Ice') {
+                } else if ($className === 'pocketmine\\block\\Snow' || $className === 'pocketmine\\block\\SnowLayer' || $className === 'pocketmine\\block\\Ice') {
                     $snowCount++;
                     if ($snowCount > 12) return 'snow';
                 } else if (strpos($className, 'Grass') !== false) {
@@ -95,7 +108,7 @@ class SpawnerTask extends Task
         return ($sandCount > 8) ? 'desert' : (($snowCount > 8) ? 'snow' : (($grassCount > 5) ? 'grass' : 'generic'));
     }
 
-    private function attemptSpawn(Position $pos, string $dimensionType): void
+    private function attemptSpawn(Position $pos, string $dimensionType): bool
     {
         $world = $pos->getWorld();
         $x = $pos->getFloorX() + mt_rand(-24, 24);
@@ -104,7 +117,7 @@ class SpawnerTask extends Task
         $chunkX = $x >> 4;
         $chunkZ = $z >> 4;
         if (!$world->isChunkGenerated($chunkX, $chunkZ)) {
-            return;
+            return false;
         }
 
         $list = [];
@@ -144,13 +157,13 @@ class SpawnerTask extends Task
                 }
             }
             
-            if ($spawnY === null) return;
+            if ($spawnY === null) return false;
         } elseif ($dimensionType === "the_end") {
             $list = $this->plugin->spawnerLists['the_end'] ?? [];
             $category = 'the_end';
 
             $y = $world->getHighestBlockAt($x, $z);
-            if ($y === null || $y < 10) return;
+            if ($y === null || $y < 10) return false;
 
             $block = $world->getBlockAt($x, $y, $z);
             $checkBlock = $world->getBlockAt($x, $y + 1, $z);
@@ -159,11 +172,11 @@ class SpawnerTask extends Task
             if (!$checkBlock->isFullCube() && !$checkBlock2->isFullCube()) {
                 $spawnY = $y + 2;
             } else {
-                return;
+                return false;
             }
         } else {
             $y = $world->getHighestBlockAt($x, $z);
-            if ($y === null || $y < 0) return;
+            if ($y === null || $y < 0) return false;
 
             $block = $world->getBlockAt($x, $y, $z);
             $isWater = $block instanceof \pocketmine\block\Water;
@@ -221,8 +234,9 @@ class SpawnerTask extends Task
                 }
 
                 $blockBelow = $world->getBlockAt($x, (int)$spawnY - 1, $z);
-                $isWater = $blockBelow instanceof \pocketmine\block\Water;
-                $isLava = $blockBelow instanceof \pocketmine\block\Lava;
+                $spawnBlock = $world->getBlockAt($x, (int)$spawnY, $z);
+                $isWater = $spawnBlock instanceof \pocketmine\block\Water || $blockBelow instanceof \pocketmine\block\Water;
+                $isLava = $spawnBlock instanceof \pocketmine\block\Lava || $blockBelow instanceof \pocketmine\block\Lava;
 
                 if ($isLava) {
                     continue;
@@ -267,10 +281,10 @@ class SpawnerTask extends Task
                         $filteredList[] = $c;
                     }
                 } else {
-                    if (!$isWater && !$isLava) {
-                        if ($mobName === 'drowned') {
-                            if ($isWater) $filteredList[] = $c;
-                        } else if ($mobName === 'husk') {
+                    if ($mobName === 'drowned') {
+                        if ($isWater) $filteredList[] = $c;
+                    } else if (!$isWater && !$isLava) {
+                        if ($mobName === 'husk') {
                             if ($biomeType === 'desert') $filteredList[] = $c;
                         } else if ($mobName === 'stray') {
                             if ($biomeType === 'snow') $filteredList[] = $c;
@@ -313,7 +327,7 @@ class SpawnerTask extends Task
                 }
             }
 
-            if (empty($filteredList)) return;
+            if (empty($filteredList)) return false;
             $class = $filteredList[array_rand($filteredList)];
 
             if ($class === \BeeAZ\AZVanillaMobs\entity\nether\Ghast::class) {
@@ -334,7 +348,7 @@ class SpawnerTask extends Task
                     if (!empty($filteredWithoutGhast)) {
                         $class = $filteredWithoutGhast[array_rand($filteredWithoutGhast)];
                     } else {
-                        return;
+                        return false;
                     }
                 }
             }
@@ -357,7 +371,7 @@ class SpawnerTask extends Task
                     if (!empty($filteredShort)) {
                         $class = $filteredShort[array_rand($filteredShort)];
                     } else {
-                        return;
+                        return false;
                     }
                 }
             }
@@ -372,7 +386,7 @@ class SpawnerTask extends Task
                 $limit = (int) $entityLimits[$entityName];
                 $currentCount = $this->getEntityTypeCount($class);
                 if ($currentCount >= $limit) {
-                    return;
+                    return false;
                 }
             }
 
@@ -384,6 +398,8 @@ class SpawnerTask extends Task
 
             $entity = new $class(Location::fromObject($spawnPos, $world, mt_rand(0, 360), 0));
             $entity->spawnToAll();
+            return true;
         }
+        return false;
     }
 }

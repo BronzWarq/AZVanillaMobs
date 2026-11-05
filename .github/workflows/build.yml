@@ -1,0 +1,41 @@
+name: Build AZVanillaMobs
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag for attaching the PHAR
+        required: true
+        default: v1.0.1
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+      - name: PHP syntax
+        run: find src tools -name '*.php' -print0 | xargs -0 -n 1 php -l
+      - name: Build PHAR
+        run: php -d phar.readonly=0 tools/build.php
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AZVanillaMobs-PM5
+          path: dist/AZVanillaMobs.phar*
+          if-no-files-found: error
+      - name: Attach release files
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          version=$(awk '/^version:/ {print $2}' plugin.yml)
+          test "$RELEASE_TAG" = "v$version"
+          gh release upload "$RELEASE_TAG" dist/AZVanillaMobs.phar dist/AZVanillaMobs.phar.sha256 --clobber

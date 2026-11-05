@@ -1,5 +1,18 @@
 # 🐾 AZVanillaMobs
 
+Форк версии **1.0.1** для PocketMine-MP 5.44.x. Проверен на 5.44.3 с PHP 8.4.16. Свежая установка теперь включает стандартный мир `world` в карту естественного спавна. Существующие `config.yml` не перезаписываются: если ваш основной мир называется иначе, впишите его имя в `worlds` вручную. Лимиты естественного спавна учитывают мобов этого плагина и соблюдаются при нескольких игроках. Исправлены распознавание песка и снега, а также условие появления утопленников в воде.
+
+Плагин использует стандартный `EntityDeathEvent`; для денежных наград с ним совместим [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1). RPGMoney и EconomyAPI не обязательны для работы самих мобов. Проверено убийство зомби; остальные виды мобов и естественный спавн требуют отдельной проверки на вашем сервере. Одновременная установка другого плагина, регистрирующего те же виды мобов, может конфликтовать.
+
+Скачайте PHAR из [релиза форка](https://github.com/BronzWarq/AZVanillaMobs/releases). Для самостоятельной сборки используйте PHP 8.4 с Phar:
+
+```sh
+php -d phar.readonly=0 tools/build.php
+```
+
+Готовый файл и его SHA-256 появятся в `dist/`. Исходный автор — BeeAZ; лицензия MIT сохранена.
+
+
 <p align="center">
   <img src="https://github.com/BeeAZ-pm-pl/AZVanillaMobs/blob/master/icon.png" width="140" height="140" alt="AZVanillaMobs Icon">
 </p>
@@ -127,7 +140,7 @@ per-world-mob-cap: 70
 
 # 🚀 Installation
 
-1. Download the plugin
+1. Download the PHAR from the fork release
 2. Put the `.phar` file into the `plugins/` folder
 3. Start the server
 4. Configure `plugin_data/AZVanillaMobs/config.yml`
@@ -137,7 +150,7 @@ per-world-mob-cap: 70
 
 # 📌 Compatibility
 
-- PocketMine-MP 5.x
+- PocketMine-MP 5.44.x tested (API 5.x)
 - API 5.0.0+
 - PHP 8+
 
