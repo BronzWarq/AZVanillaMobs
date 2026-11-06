@@ -117,11 +117,11 @@ abstract class Monster extends BaseMob {
             $this->targetEntity = $nearest;
             $this->targetPosition = clone $nearest->getLocation();
 
-            if ($minDist < 2.5 && $this->attackDelay <= 0) {
+            if ($minDist < 2.5 && $this->attackDelay <= 0 && $this->canMeleeAttack()) {
                 $ev = new EntityDamageByEntityEvent($this, $nearest, EntityDamageEvent::CAUSE_ENTITY_ATTACK, $this->getAttackDamage());
                 $nearest->attack($ev);
 
-                if ($nearest instanceof Player) {
+                if ($nearest instanceof Player && !$ev->isCancelled()) {
                     if ($this instanceof \BeeAZ\AZVanillaMobs\entity\overworld\CaveSpider) {
                         $nearest->getEffects()->add(new \pocketmine\entity\effect\EffectInstance(
                             \pocketmine\entity\effect\VanillaEffects::POISON(),
@@ -186,6 +186,10 @@ abstract class Monster extends BaseMob {
 
     public function getAttackDamage(): float {
         return parent::getAttackDamage();
+    }
+
+    protected function canMeleeAttack(): bool {
+        return true;
     }
 
     public function getXpDropAmount(): int {

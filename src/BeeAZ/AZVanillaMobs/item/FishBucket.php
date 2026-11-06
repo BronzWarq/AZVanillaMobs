@@ -12,6 +12,7 @@ use pocketmine\block\Block;
 use pocketmine\math\Vector3;
 use pocketmine\item\ItemUseResult;
 use pocketmine\entity\Location;
+use pocketmine\event\player\PlayerBucketEmptyEvent;
 
 class FishBucket extends Item {
 
@@ -31,19 +32,25 @@ class FishBucket extends Item {
             return ItemUseResult::NONE;
         }
 
+        $event = new PlayerBucketEmptyEvent($player, $blockReplace, $face, $this, VanillaItems::BUCKET());
+        $event->call();
+        if ($event->isCancelled()) {
+            return ItemUseResult::FAIL;
+        }
+
         $world = $player->getWorld();
         $pos = $blockReplace->getPosition();
         
         $location = Location::fromObject($pos->add(0.5, 0.0, 0.5), $world, mt_rand(0, 360), 0);
         $entity = new $this->entityClass($location);
         
-        $world->setBlock($pos, \pocketmine\block\VanillaBlocks::WATER());
+        $world->setBlock($pos, \pocketmine\block\VanillaBlocks::WATER()->getFlowingForm());
         $world->addSound($pos->add(0.5, 0.5, 0.5), \pocketmine\block\VanillaBlocks::WATER()->getBucketEmptySound());
         
         $entity->spawnToAll();
         
         $this->pop();
-        $returnedItems[] = VanillaItems::BUCKET();
+        $returnedItems[] = $event->getItem();
         return ItemUseResult::SUCCESS;
     }
 }

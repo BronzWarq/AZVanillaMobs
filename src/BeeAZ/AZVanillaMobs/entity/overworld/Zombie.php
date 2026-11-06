@@ -41,8 +41,8 @@ class Zombie extends Monster {
     private function convertToDrowned(): void {
         $drowned = new Drowned(Location::fromObject($this->location, $this->getWorld(), $this->location->yaw, $this->location->pitch));
         
-        $drowned->setHealth(min($this->getHealth(), $drowned->getMaxHealth()));
         $drowned->setMaxHealth($this->getMaxHealth());
+        $drowned->setHealth(min($this->getHealth(), $drowned->getMaxHealth()));
         
         if ($this->getNameTag() !== "") {
             $drowned->setNameTag($this->getNameTag());

@@ -1,0 +1,5 @@
+name: AZVanillaMobsAudit
+version: 1.0.0
+main: BeeAZ\AZVanillaMobsAudit\Smoke
+api: 5.0.0
+depend: [AZVanillaMobs]

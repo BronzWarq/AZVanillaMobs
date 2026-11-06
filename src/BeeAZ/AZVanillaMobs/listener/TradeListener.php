@@ -6,6 +6,7 @@ namespace BeeAZ\AZVanillaMobs\listener;
 
 use BeeAZ\AZVanillaMobs\Main;
 use BeeAZ\AZVanillaMobs\entity\overworld\Villager;
+use BeeAZ\AZVanillaMobs\inventory\TradeInventory;
 use BeeAZ\AZVanillaMobs\utils\TradeManager;
 use pocketmine\event\Listener;
 use pocketmine\event\player\PlayerEntityInteractEvent;
@@ -33,6 +34,7 @@ class TradeListener implements Listener {
 
     private Main $plugin;
     public static array $trading = [];
+    private static array $tradeInventories = [];
     public static array $tradeOffset = [];
     public static array $clientRecipeCount = [];
 
@@ -73,8 +75,8 @@ class TradeListener implements Listener {
 
         self::$trading[$player->getName()] = $villager;
 
-        $inv = $villager->getOrCreateTradeInventory();
-        $inv->clearAll();
+        $inv = new TradeInventory();
+        self::$tradeInventories[$player->getName()] = $inv;
 
         $playerName = $player->getName();
         $recipes = $villager->getTradeRecipes();
@@ -145,12 +147,12 @@ class TradeListener implements Listener {
 
     public static function closeTrade(Player $player): void {
         $name = $player->getName();
-        unset(self::$tradeOffset[$name]);
+        unset(self::$tradeOffset[$name], self::$clientRecipeCount[$name]);
         if (isset(self::$trading[$name])) {
             $villager = self::$trading[$name];
             unset(self::$trading[$name]);
 
-            $inv = $villager->getTradeInventory();
+            $inv = self::$tradeInventories[$name] ?? null;
             if ($inv !== null) {
                 for ($slot = 0; $slot <= 1; $slot++) {
                     $item = $inv->getItem($slot);
@@ -181,6 +183,7 @@ class TradeListener implements Listener {
                 $invManager->syncAll();
             }
         }
+        unset(self::$tradeInventories[$name]);
     }
 
     public function onDataPacketReceive(DataPacketReceiveEvent $event): void {
@@ -206,7 +209,7 @@ class TradeListener implements Listener {
             if ($player === null || !isset(self::$trading[$player->getName()])) return;
 
             $villager = self::$trading[$player->getName()];
-            $tradeInv = $villager->getTradeInventory();
+            $tradeInv = self::$tradeInventories[$player->getName()] ?? null;
             if ($tradeInv === null) return;
 
             try {
@@ -394,9 +397,7 @@ class TradeListener implements Listener {
                                     $recipeIndex = $testIdx;
                                 }
                             }
-                            if ($recipeIndex === null) {
-                                $recipeIndex = $matchingIndices[0];
-                            }
+                            // Identical inputs can have different outputs. Never guess a recipe.
                         }
                     }
 
@@ -411,6 +412,19 @@ class TradeListener implements Listener {
                             $sellCount = $recipe['sell']->getCount();
                             if ($totalCount === 0) {
                                 $totalCount = $sellCount * $multiplier;
+                            }
+
+                            $buyA = $recipe['buyA'];
+                            $buyB = $recipe['buyB'] ?? null;
+                            $maxTrades = min(
+                                intdiv($inputA->getCount(), $buyA->getCount()),
+                                $buyB !== null && !$buyB->isNull() ? intdiv($inputB->getCount(), $buyB->getCount()) : PHP_INT_MAX,
+                                $recipe['maxUses'] - $recipe['uses']
+                            );
+                            if ($multiplier < 1 || $multiplier > $maxTrades ||
+                                $totalCount !== $sellCount * $multiplier ||
+                                $totalCount > $recipe['sell']->getMaxStackSize()) {
+                                return;
                             }
                             
                             $sellItem = clone $recipe['sell'];

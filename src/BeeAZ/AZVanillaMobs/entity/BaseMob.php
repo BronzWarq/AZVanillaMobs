@@ -195,7 +195,19 @@ abstract class BaseMob extends Living
             'warden' => 30.0,
         ];
 
-        return $damageMap[$name] ?? 3.0;
+        return $this->configuredAttackDamage($name, $damageMap[$name] ?? 3.0);
+    }
+
+    protected function configuredAttackDamage(string $name, float $default): float
+    {
+        $plugin = \pocketmine\Server::getInstance()->getPluginManager()->getPlugin('AZVanillaMobs');
+        $overrides = $plugin?->getConfig()->get('combat-damage', []);
+        $value = is_array($overrides) ? ($overrides[$name] ?? null) : null;
+        if (!is_numeric($value)) {
+            return $default;
+        }
+        $damage = (float) $value;
+        return is_finite($damage) && $damage >= 0.0 && $damage <= 1000.0 ? $damage : $default;
     }
 
     public function isFlying(): bool

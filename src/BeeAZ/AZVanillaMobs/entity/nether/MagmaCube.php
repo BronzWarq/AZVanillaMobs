@@ -43,7 +43,7 @@ class MagmaCube extends Monster {
     }
 
     public function getAttackDamage(): float {
-        return $this->slimeSize === 4 ? 4.0 : ($this->slimeSize === 2 ? 2.0 : 0.0);
+        return $this->configuredAttackDamage('magmacube', $this->slimeSize === 4 ? 4.0 : ($this->slimeSize === 2 ? 2.0 : 0.0));
     }
 
     public function getXpDropAmount(): int {

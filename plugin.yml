@@ -1,5 +1,5 @@
 name: AZVanillaMobs
-version: 1.0.1
+version: 1.0.2
 main: BeeAZ\AZVanillaMobs\Main
 api: 5.0.0
 authors: [BeeAZ, BronzWarq]

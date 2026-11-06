@@ -84,6 +84,30 @@ abstract class Animal extends BaseMob
     {
         $item = $player->getInventory()->getItemInHand();
 
+        $bucketId = match (static::class) {
+            \BeeAZ\AZVanillaMobs\entity\overworld\Cod::class => 'cod_bucket',
+            \BeeAZ\AZVanillaMobs\entity\overworld\Salmon::class => 'salmon_bucket',
+            \BeeAZ\AZVanillaMobs\entity\overworld\Pufferfish::class => 'pufferfish_bucket',
+            \BeeAZ\AZVanillaMobs\entity\overworld\TropicalFish::class => 'tropical_fish_bucket',
+            \BeeAZ\AZVanillaMobs\entity\overworld\Axolotl::class => 'axolotl_bucket',
+            \BeeAZ\AZVanillaMobs\entity\overworld\Tadpole::class => 'tadpole_bucket',
+            default => null,
+        };
+        if ($bucketId !== null && $item->equals(\pocketmine\item\VanillaItems::WATER_BUCKET())) {
+            $filledBucket = \pocketmine\item\StringToItemParser::getInstance()->parse($bucketId);
+            if ($filledBucket !== null) {
+                if (!$player->isCreative()) {
+                    $item->pop();
+                    $player->getInventory()->setItemInHand($item);
+                    foreach ($player->getInventory()->addItem($filledBucket) as $leftover) {
+                        $this->getWorld()->dropItem($this->getLocation(), $leftover);
+                    }
+                }
+                $this->close();
+                return true;
+            }
+        }
+
         if ($this->age === 0 && $this->inLoveTicks <= 0 && $this->isBreedingItem($item)) {
             $this->inLoveTicks = 600;
             $item->pop();

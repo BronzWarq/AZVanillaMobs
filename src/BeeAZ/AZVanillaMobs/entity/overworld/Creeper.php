@@ -9,6 +9,10 @@ use pocketmine\world\Explosion;
 class Creeper extends \BeeAZ\AZVanillaMobs\entity\Monster {
     private int $fuse = 0;
 
+    protected function canMeleeAttack(): bool {
+        return false;
+    }
+
     public static function getNetworkTypeId(): string {
         return "minecraft:creeper";
     }
@@ -66,13 +70,17 @@ class Creeper extends \BeeAZ\AZVanillaMobs\entity\Monster {
                 $this->getNetworkProperties()->setGenericFlag(\pocketmine\network\mcpe\protocol\types\entity\EntityMetadataFlags::IGNITED, true);
             }
             $this->fuse++;
-            $this->getWorld()->addParticle($this->getLocation()->add(0, 1, 0), new \pocketmine\world\particle\LavaParticle());
+            if (!$this->isInsideOfWater()) {
+                $this->getWorld()->addParticle($this->getLocation()->add(0, 1, 0), new \pocketmine\world\particle\LavaParticle());
+            }
 
             if ($this->fuse >= 30) {
+                $this->fuse = 0;
+                $this->getNetworkProperties()->setGenericFlag(\pocketmine\network\mcpe\protocol\types\entity\EntityMetadataFlags::IGNITED, false);
                 $explosion = new Explosion($this->getPosition(), 3, $this);
                 $explosion->explodeA();
                 $explosion->explodeB();
-                $this->kill();
+                $this->close();
             }
         } else {
             if ($this->fuse > 0) {

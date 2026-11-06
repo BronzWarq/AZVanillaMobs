@@ -12,6 +12,10 @@ worlds:
 # Global cap for maximum mobs allowed on the server at once
 global-mob-cap: 200
 
+# Optional melee damage overrides. Omit a mob to use its built-in value.
+# Example: zombie: 3, irongolem: 15 (keys are lowercase class names).
+combat-damage: {}
+
 # Cap for maximum mobs allowed per world
 per-world-mob-cap: 70
 

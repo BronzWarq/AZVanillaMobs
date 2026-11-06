@@ -1,6 +1,6 @@
 # 🐾 AZVanillaMobs
 
-Форк версии **1.0.1** для PocketMine-MP 5.44.x. Проверен на 5.44.3 с PHP 8.4.16. Свежая установка теперь включает стандартный мир `world` в карту естественного спавна. Существующие `config.yml` не перезаписываются: если ваш основной мир называется иначе, впишите его имя в `worlds` вручную. Лимиты естественного спавна учитывают мобов этого плагина и соблюдаются при нескольких игроках. Исправлены распознавание песка и снега, а также условие появления утопленников в воде.
+Форк версии **1.0.2** для PocketMine-MP 5.44.x. Проверен на 5.44.3 с PHP 8.4.16. В новой версии исправлены бой, торговля и поведение мобов; полный список изменений приведён в [заметках к релизу](docs/releases/v1.0.2.md). Свежая установка включает стандартный мир `world` в карту естественного спавна. Существующие `config.yml` не перезаписываются: если ваш основной мир называется иначе, впишите его имя в `worlds` вручную.
 
 Плагин использует стандартный `EntityDeathEvent`; для денежных наград с ним совместим [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1). RPGMoney и EconomyAPI не обязательны для работы самих мобов. Проверено убийство зомби; остальные виды мобов и естественный спавн требуют отдельной проверки на вашем сервере. Одновременная установка другого плагина, регистрирующего те же виды мобов, может конфликтовать.
 
@@ -37,7 +37,7 @@ php -d phar.readonly=0 tools/build.php
 - Better hostile mob targeting behavior
 
 ## ⚔️ Vanilla Combat System
-- Vanilla-accurate damage values for every mob
+- Built-in mob damage values with optional `combat-damage` overrides in `config.yml`
 - Cave Spider poison attacks
 - Wither Skeleton applies Wither effect
 - Husk applies Hunger effect
@@ -50,7 +50,7 @@ php -d phar.readonly=0 tools/build.php
 - Hostile mobs spawn at night
 - Aquatic mobs spawn in water
 - Nether and End exclusive spawning
-- Vanilla Phantom spawning mechanics
+- Nighttime Phantom spawning above the ground
 
 ## 🌊 Aquatic Features
 - Improved fish AI and movement
@@ -59,6 +59,7 @@ php -d phar.readonly=0 tools/build.php
   - Salmon Bucket
   - Tropical Fish Bucket
   - Pufferfish Bucket
+- Fish, axolotls, and tadpoles can be captured with a water bucket
 
 ## ☠️ Mob Mechanics
 - Zombie → Drowned conversion

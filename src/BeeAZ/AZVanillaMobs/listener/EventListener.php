@@ -49,8 +49,8 @@ class EventListener implements Listener
         if (get_class($entity) === 'pocketmine\entity\Zombie') {
             $location = $entity->getLocation();
             $newZombie = new Zombie($location);
-            $newZombie->setHealth($entity->getHealth());
             $newZombie->setMaxHealth($entity->getMaxHealth());
+            $newZombie->setHealth(min($entity->getHealth(), $newZombie->getMaxHealth()));
             $entity->close();
             $newZombie->spawnToAll();
         }

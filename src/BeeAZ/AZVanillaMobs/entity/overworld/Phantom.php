@@ -33,7 +33,7 @@ class Phantom extends Monster {
     }
 
     public function getAttackDamage(): float {
-        return 6.0; 
+        return $this->configuredAttackDamage('phantom', 6.0);
     }
 
     protected function calculateAI(): void {

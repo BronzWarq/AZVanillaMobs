@@ -28,10 +28,10 @@ class SnowGolem extends Animal {
     protected function calculateAI(): void {
         
         $nearest = null;
-        $minDist = 1024.0; 
+        $minDist = 144.0;
 
-        foreach ($this->getWorld()->getEntities() as $entity) {
-            if ($entity instanceof Monster && $entity->isAlive()) {
+        foreach ($this->getWorld()->getNearbyEntities($this->getBoundingBox()->expandedCopy(12, 12, 12), $this) as $entity) {
+            if ($entity instanceof Monster && $entity->isAlive() && !$entity->isClosed()) {
                 $dist = $this->location->distanceSquared($entity->getLocation());
                 if ($dist < $minDist) {
                     $minDist = $dist;

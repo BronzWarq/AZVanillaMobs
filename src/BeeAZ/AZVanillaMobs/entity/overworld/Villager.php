@@ -56,7 +56,11 @@ class Villager extends Animal {
     }
 
     public function setProfession(int $profession): void {
+        if ($this->profession === $profession) return;
         $this->profession = $profession;
+        $this->level = 1;
+        $this->xp = 0;
+        $this->generateRecipes();
         $this->updateNetworkProperties();
     }
 
@@ -365,7 +369,7 @@ class Villager extends Animal {
     }
 
     public function getTradeRecipes(): array {
-        if ($this->tradeRecipes === null) {
+        if ($this->tradeRecipes === null || ($this->tradeRecipes === [] && $this->profession !== 0 && $this->profession !== 14)) {
             $this->generateRecipes();
         }
         return $this->tradeRecipes;
