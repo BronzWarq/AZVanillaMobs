@@ -1,16 +1,16 @@
 # 🐾 AZVanillaMobs
 
-Форк версии **1.0.2** для PocketMine-MP 5.44.x. Проверен на 5.44.3 с PHP 8.4.16. В новой версии исправлены бой, торговля и поведение мобов; полный список изменений приведён в [заметках к релизу](docs/releases/v1.0.2.md). Свежая установка включает стандартный мир `world` в карту естественного спавна. Существующие `config.yml` не перезаписываются: если ваш основной мир называется иначе, впишите его имя в `worlds` вручную.
+Fork version **1.0.2** for PocketMine-MP 5.44.x, tested on 5.44.3 with PHP 8.4.16. This release fixes combat, trading, and mob behavior; see the [release notes](https://github.com/BronzWarq/AZVanillaMobs/blob/master/docs/releases/v1.0.2.md) for the full list of changes. A fresh installation includes the default `world` in the natural spawning configuration. Existing `config.yml` files are not overwritten: if your main world has a different name, add it to `worlds` manually.
 
-Плагин использует стандартный `EntityDeathEvent`; для денежных наград с ним совместим [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1). RPGMoney и EconomyAPI не обязательны для работы самих мобов. Проверено убийство зомби; остальные виды мобов и естественный спавн требуют отдельной проверки на вашем сервере. Одновременная установка другого плагина, регистрирующего те же виды мобов, может конфликтовать.
+The plugin uses the standard `EntityDeathEvent` and is compatible with [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1) for money rewards. Neither RPGMoney nor EconomyAPI is required for the mobs themselves. A zombie kill has been tested; other mob types and natural spawning still need testing on your server. Installing another plugin that registers the same mob types may cause conflicts.
 
-Скачайте PHAR из [релиза форка](https://github.com/BronzWarq/AZVanillaMobs/releases). Для самостоятельной сборки используйте PHP 8.4 с Phar:
+Download the PHAR from the [fork's releases](https://github.com/BronzWarq/AZVanillaMobs/releases). To build it yourself, use PHP 8.4 with Phar:
 
 ```sh
 php -d phar.readonly=0 tools/build.php
 ```
 
-Готовый файл и его SHA-256 появятся в `dist/`. Исходный автор — BeeAZ; лицензия MIT сохранена.
+The PHAR and its SHA-256 checksum will appear in `dist/`. The original author is BeeAZ; the MIT license is retained.
 
 
 <p align="center">
