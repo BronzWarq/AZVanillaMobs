@@ -22,7 +22,7 @@ class SummonCommand extends Command implements PluginOwned {
 
     public function __construct(Main $plugin) {
         $this->__traitConstruct($plugin);
-        parent::__construct("summon", "Summon an AZVanillaMob", "/summon <mob> [amount]", ["azsummon"]);
+        parent::__construct("azsummon", "Summon an AZVanillaMob", "/azsummon <mob> [amount: 1-20]", ["azmob"]);
         $this->setPermission("azvanillamobs.command.summon");
         $this->plugin = $plugin;
     }
@@ -35,12 +35,19 @@ class SummonCommand extends Command implements PluginOwned {
         }
 
         if (count($args) < 1) {
-            $sender->sendMessage("Usage: /summon <mob> [amount]");
+            $sender->sendMessage("Usage: /azsummon <mob> [amount: 1-20]");
             return false;
         }
 
         $mobName = strtolower($args[0]);
-        $amount = isset($args[1]) ? max(1, (int)$args[1]) : 1;
+        $amount = 1;
+        if (isset($args[1])) {
+            if (!ctype_digit($args[1]) || (int)$args[1] < 1 || (int)$args[1] > 20) {
+                $sender->sendMessage("§cAmount must be a whole number from 1 to 20.");
+                return false;
+            }
+            $amount = (int)$args[1];
+        }
 
         $targetClass = null;
         foreach ($this->plugin->spawnerLists as $list) {

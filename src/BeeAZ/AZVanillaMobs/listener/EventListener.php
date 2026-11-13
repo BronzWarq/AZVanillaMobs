@@ -88,7 +88,13 @@ class EventListener implements Listener
             $player = $event->getPlayer();
             if ($player->isCreative()) return;
 
-            foreach ($block->getPosition()->getWorld()->getEntities() as $entity) {
+            $world = $block->getPosition()->getWorld();
+            $position = $block->getPosition();
+            $nearby = new \pocketmine\math\AxisAlignedBB(
+                $position->x - 16, $position->y - 16, $position->z - 16,
+                $position->x + 17, $position->y + 17, $position->z + 17
+            );
+            foreach ($world->getNearbyEntities($nearby) as $entity) {
                 if ($entity instanceof Bee) {
                     if ($entity->getLocation()->distanceSquared($block->getPosition()) <= 256) {
                         $entity->anger($player);

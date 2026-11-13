@@ -34,7 +34,7 @@ class Creeper extends \BeeAZ\AZVanillaMobs\entity\Monster {
         }
 
         $flee = false;
-        foreach ($this->getWorld()->getEntities() as $entity) {
+        foreach ($this->getWorld()->getNearbyEntities($this->getBoundingBox()->expandedCopy(6, 6, 6)) as $entity) {
             if ($entity instanceof \BeeAZ\AZVanillaMobs\entity\overworld\Cat || $entity instanceof \BeeAZ\AZVanillaMobs\entity\overworld\Ocelot) {
                 if ($this->location->distanceSquared($entity->getLocation()) < 36.0) {
                     $flee = true;
@@ -77,7 +77,7 @@ class Creeper extends \BeeAZ\AZVanillaMobs\entity\Monster {
             if ($this->fuse >= 30) {
                 $this->fuse = 0;
                 $this->getNetworkProperties()->setGenericFlag(\pocketmine\network\mcpe\protocol\types\entity\EntityMetadataFlags::IGNITED, false);
-                $explosion = new Explosion($this->getPosition(), 3, $this);
+                $explosion = new Explosion($this->getPosition(), 3.0 * $this->getRareDamageMultiplier(), $this);
                 $explosion->explodeA();
                 $explosion->explodeB();
                 $this->close();
@@ -98,7 +98,7 @@ class Creeper extends \BeeAZ\AZVanillaMobs\entity\Monster {
         $fleeFrom = null;
         $minFleeDist = 36.0;
 
-        foreach ($this->getWorld()->getEntities() as $entity) {
+        foreach ($this->getWorld()->getNearbyEntities($this->getBoundingBox()->expandedCopy(6, 6, 6)) as $entity) {
             if ($entity instanceof \BeeAZ\AZVanillaMobs\entity\overworld\Cat || $entity instanceof \BeeAZ\AZVanillaMobs\entity\overworld\Ocelot) {
                 $dist = $this->location->distanceSquared($entity->getLocation());
                 if ($dist < $minFleeDist) {

@@ -86,6 +86,7 @@ class Fox extends Animal {
     }
 
     public function onInteract(Player $player, Vector3 $clickPos): bool {
+        $this->setPersistenceRequired(true);
         $itemInHand = $player->getInventory()->getItemInHand();
 
         if ($itemInHand->isNull() && $this->heldItem !== null && !$this->heldItem->isNull() && $this->spitDelay <= 0) {

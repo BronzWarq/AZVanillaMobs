@@ -43,6 +43,9 @@ class Wolf extends Animal {
         $this->isAngry = $nbt->getByte("IsAngry", 0) === 1;
         $this->ownerUuid = $nbt->getString("OwnerUUID", "");
         $this->collarColor = $nbt->getInt("CollarColor", 14);
+        if ($this->isTamed) {
+            $this->setPersistenceRequired(true);
+        }
 
         $this->getNetworkProperties()->setGenericFlag(EntityMetadataFlags::TAMED, $this->isTamed);
         $this->getNetworkProperties()->setGenericFlag(EntityMetadataFlags::SITTING, $this->isSitting);
@@ -83,6 +86,9 @@ class Wolf extends Animal {
 
     public function setTamed(bool $tamed, ?Player $owner = null): void {
         $this->isTamed = $tamed;
+        if ($tamed) {
+            $this->setPersistenceRequired(true);
+        }
         $this->getNetworkProperties()->setGenericFlag(EntityMetadataFlags::TAMED, $tamed);
         if ($owner !== null) {
             $this->ownerUuid = $owner->getUniqueId()->toString();
@@ -190,6 +196,7 @@ class Wolf extends Animal {
     }
 
     public function onInteract(Player $player, Vector3 $clickPos): bool {
+        $this->setPersistenceRequired(true);
         $time = microtime(true);
         if ($time - $this->lastInteractTime < 0.5) {
             return true;

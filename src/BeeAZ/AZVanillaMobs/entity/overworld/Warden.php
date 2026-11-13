@@ -253,7 +253,7 @@ class Warden extends Monster {
             $p->getNetworkSession()->sendDataPacket($soundPacket);
         }
 
-        $ev = new EntityDamageByEntityEvent($this, $target, EntityDamageEvent::CAUSE_MAGIC, 15.0);
+        $ev = new EntityDamageByEntityEvent($this, $target, EntityDamageEvent::CAUSE_MAGIC, 15.0 * $this->getRareDamageMultiplier());
         $target->attack($ev);
 
         $direction = $diff->normalize();

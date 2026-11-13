@@ -9,12 +9,19 @@ use pocketmine\entity\Living;
 use pocketmine\math\Vector3;
 use pocketmine\nbt\tag\CompoundTag;
 use pocketmine\entity\Location;
+use pocketmine\player\Player;
 
 abstract class BaseMob extends Living
 {
     protected int $tickOffset = 0;
     protected ?Vector3 $targetPosition = null;
     protected ?\pocketmine\entity\Living $targetEntity = null;
+    private bool $naturallySpawned = false;
+    private bool $persistenceRequired = false;
+    private bool $rareEncounter = false;
+    private float $rareDamageMultiplier = 1.0;
+    /** @var array{item: string, amount: int, chance: float}|null */
+    private ?array $rareBonusDrop = null;
 
     public function __construct(Location $location, ?CompoundTag $nbt = null)
     {
@@ -30,6 +37,19 @@ abstract class BaseMob extends Living
         $this->setMaxHealth($this->getDefaultMaxHealth());
         parent::initEntity($nbt);
 
+        $this->naturallySpawned = $nbt->getByte("AZNaturalSpawn", 0) !== 0;
+        $this->persistenceRequired = $nbt->getByte("AZPersistenceRequired", 0) !== 0;
+        $this->rareEncounter = $nbt->getByte("AZRareEncounter", 0) !== 0;
+        $this->rareDamageMultiplier = max(1.0, min(3.0, $nbt->getFloat("AZRareDamageMultiplier", 1.0)));
+        $rareItem = $nbt->getString("AZRareBonusItem", "");
+        if ($rareItem !== "") {
+            $this->rareBonusDrop = [
+                'item' => $rareItem,
+                'amount' => max(1, min(64, $nbt->getInt("AZRareBonusAmount", 1))),
+                'chance' => max(0.0, min(1.0, $nbt->getFloat("AZRareBonusChance", 0.0))),
+            ];
+        }
+
         if ($nbt->getTag("MaxHealth") !== null) {
             $this->setMaxHealth($nbt->getInt("MaxHealth"));
         }
@@ -43,6 +63,7 @@ abstract class BaseMob extends Living
 
         $fenceLeashTag = $nbt->getCompoundTag("FenceLeash");
         if ($fenceLeashTag !== null) {
+            $this->setPersistenceRequired(true);
             $x = $fenceLeashTag->getInt("X");
             $y = $fenceLeashTag->getInt("Y");
             $z = $fenceLeashTag->getInt("Z");
@@ -55,6 +76,15 @@ abstract class BaseMob extends Living
     {
         $nbt = parent::saveNBT();
         $nbt->setInt("MaxHealth", $this->getMaxHealth());
+        $nbt->setByte("AZNaturalSpawn", $this->naturallySpawned ? 1 : 0);
+        $nbt->setByte("AZPersistenceRequired", $this->persistenceRequired ? 1 : 0);
+        $nbt->setByte("AZRareEncounter", $this->rareEncounter ? 1 : 0);
+        $nbt->setFloat("AZRareDamageMultiplier", $this->rareDamageMultiplier);
+        if ($this->rareBonusDrop !== null) {
+            $nbt->setString("AZRareBonusItem", $this->rareBonusDrop['item']);
+            $nbt->setInt("AZRareBonusAmount", $this->rareBonusDrop['amount']);
+            $nbt->setFloat("AZRareBonusChance", $this->rareBonusDrop['chance']);
+        }
 
         if (isset(\BeeAZ\AZVanillaMobs\listener\LeashListener::$fenceLeashedEntities[$this->getId()])) {
             $fenceData = \BeeAZ\AZVanillaMobs\listener\LeashListener::$fenceLeashedEntities[$this->getId()];
@@ -204,10 +234,78 @@ abstract class BaseMob extends Living
         $overrides = $plugin?->getConfig()->get('combat-damage', []);
         $value = is_array($overrides) ? ($overrides[$name] ?? null) : null;
         if (!is_numeric($value)) {
-            return $default;
+            return $default * $this->rareDamageMultiplier;
         }
         $damage = (float) $value;
-        return is_finite($damage) && $damage >= 0.0 && $damage <= 1000.0 ? $damage : $default;
+        if (!is_finite($damage) || $damage < 0.0 || $damage > 1000.0) {
+            $damage = $default;
+        }
+        return $damage * $this->rareDamageMultiplier;
+    }
+
+    public function setNaturallySpawned(bool $value): void
+    {
+        $this->naturallySpawned = $value;
+    }
+
+    public function isNaturallySpawned(): bool
+    {
+        return $this->naturallySpawned;
+    }
+
+    public function setPersistenceRequired(bool $value): void
+    {
+        $this->persistenceRequired = $value;
+    }
+
+    public function isPersistenceRequired(): bool
+    {
+        return $this->persistenceRequired || $this->getNameTag() !== "";
+    }
+
+    public function setRareEncounter(bool $value, float $damageMultiplier = 1.0): void
+    {
+        $this->rareEncounter = $value;
+        $this->rareDamageMultiplier = $value ? max(1.0, min(3.0, $damageMultiplier)) : 1.0;
+        if ($value) {
+            $this->persistenceRequired = true;
+        }
+    }
+
+    public function isRareEncounter(): bool
+    {
+        return $this->rareEncounter;
+    }
+
+    public function getRareDamageMultiplier(): float
+    {
+        return $this->rareDamageMultiplier;
+    }
+
+    /** @param array{item: string, amount: int, chance: float}|null $drop */
+    public function setRareBonusDrop(?array $drop): void
+    {
+        if ($drop === null || !isset($drop['item']) || trim($drop['item']) === '') {
+            $this->rareBonusDrop = null;
+            return;
+        }
+        $this->rareBonusDrop = [
+            'item' => trim($drop['item']),
+            'amount' => max(1, min(64, (int)($drop['amount'] ?? 1))),
+            'chance' => max(0.0, min(1.0, (float)($drop['chance'] ?? 0.0))),
+        ];
+    }
+
+    /** @return array{item: string, amount: int, chance: float}|null */
+    public function getRareBonusDrop(): ?array
+    {
+        return $this->rareBonusDrop;
+    }
+
+    public function onInteract(Player $player, Vector3 $clickPos): bool
+    {
+        $this->setPersistenceRequired(true);
+        return parent::onInteract($player, $clickPos);
     }
 
     public function isFlying(): bool

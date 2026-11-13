@@ -29,6 +29,9 @@ class Panda extends Animal {
     protected function initEntity(CompoundTag $nbt): void {
         parent::initEntity($nbt);
         $this->isTamed = $nbt->getByte("IsTamed", 0) === 1;
+        if ($this->isTamed) {
+            $this->setPersistenceRequired(true);
+        }
         $this->getNetworkProperties()->setGenericFlag(EntityMetadataFlags::TAMED, $this->isTamed);
         $this->getNetworkProperties()->setFloat(EntityMetadataProperties::SITTING_AMOUNT, 0.0);
         $this->getNetworkProperties()->setFloat(EntityMetadataProperties::SITTING_AMOUNT_PREVIOUS, 0.0);
@@ -46,6 +49,9 @@ class Panda extends Animal {
 
     public function setTamed(bool $tamed): void {
         $this->isTamed = $tamed;
+        if ($tamed) {
+            $this->setPersistenceRequired(true);
+        }
         $this->getNetworkProperties()->setGenericFlag(EntityMetadataFlags::TAMED, $tamed);
     }
 
@@ -150,11 +156,15 @@ class Panda extends Animal {
         $bambooEntity = null;
         $closestDist = 999.0;
 
-        foreach ($this->getWorld()->getEntities() as $entity) {
+        $bambooItem = \pocketmine\item\StringToItemParser::getInstance()->parse("bamboo");
+        if ($bambooItem === null) {
+            parent::calculateAI();
+            return;
+        }
+        foreach ($this->getWorld()->getNearbyEntities($this->getBoundingBox()->expandedCopy(12, 12, 12)) as $entity) {
             if ($entity instanceof ItemEntity) {
                 $item = $entity->getItem();
-                $bambooItem = \pocketmine\item\StringToItemParser::getInstance()->parse("bamboo");
-                if ($bambooItem !== null && $item->equals($bambooItem, false, false)) {
+                if ($item->equals($bambooItem, false, false)) {
                     $dist = $this->getLocation()->distanceSquared($entity->getLocation());
                     if ($dist < 144 && $dist < $closestDist) {
                         $closestDist = $dist;

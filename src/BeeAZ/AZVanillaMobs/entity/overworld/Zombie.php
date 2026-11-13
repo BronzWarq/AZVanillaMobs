@@ -43,6 +43,12 @@ class Zombie extends Monster {
         
         $drowned->setMaxHealth($this->getMaxHealth());
         $drowned->setHealth(min($this->getHealth(), $drowned->getMaxHealth()));
+        $drowned->setNaturallySpawned($this->isNaturallySpawned());
+        $drowned->setPersistenceRequired($this->isPersistenceRequired());
+        if ($this->isRareEncounter()) {
+            $drowned->setRareEncounter(true, $this->getRareDamageMultiplier());
+            $drowned->setRareBonusDrop($this->getRareBonusDrop());
+        }
         
         if ($this->getNameTag() !== "") {
             $drowned->setNameTag($this->getNameTag());

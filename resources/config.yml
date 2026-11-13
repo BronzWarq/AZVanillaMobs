@@ -1,13 +1,13 @@
 ---
 # AZVanillaMobs Configuration
 
-# Map your worlds to their specific dimension type (overworld, nether, the_end)
+# World values may stay as the old dimension strings or use a dimension/profile pair.
 worlds:
-  "world": "overworld"
-  "skyblock": "overworld"
-  "normal": "overworld"
-  "nether": "nether"
-  "the_end": "the_end"
+  "world": {dimension: "overworld", profile: "survival"}
+  "skyblock": {dimension: "overworld", profile: "sparse"}
+  "normal": {dimension: "overworld", profile: "survival"}
+  "nether": {dimension: "nether", profile: "survival"}
+  "the_end": {dimension: "the_end", profile: "survival"}
 
 # Global cap for maximum mobs allowed on the server at once
 global-mob-cap: 200
@@ -18,6 +18,82 @@ combat-damage: {}
 
 # Cap for maximum mobs allowed per world
 per-world-mob-cap: 70
+
+# A player becomes eligible for natural phantom attacks after this many full
+# in-game days without sleeping. New players start counting from their first join.
+phantom-sleep:
+  nights-without-sleep: 3
+
+# Profiles control natural spawning separately for each configured world.
+# Existing world entries such as "world: overworld" continue to use "default".
+spawn-profiles:
+  survival:
+    interval-seconds: 5
+    attempts-per-player: 1
+    max-attempts-per-cycle: 40
+    min-player-distance: 24
+    max-player-distance: 48
+    per-world-mob-cap: 70
+    natural-hostile-despawn-distance: 128
+    categories: [hostile, passive, aquatic]
+    disabled-mobs: []
+    mob-weights:
+      zombie: 10
+      skeleton: 10
+      creeper: 6
+      spider: 8
+      witch: 2
+      enderman: 2
+      phantom: 2
+      warden: 0
+      elderguardian: 0
+      enderdragon: 0
+      evoker: 0
+      vindicator: 0
+      pillager: 0
+      ravager: 0
+      vex: 0
+      villager: 0
+      irongolem: 0
+      snowgolem: 0
+      wanderingtrader: 0
+      allay: 0
+      sniffer: 0
+    mob-biomes:
+      husk: [desert, "badlands*"]
+      stray: ["snowy_*", "frozen_*", ice_spikes, grove, jagged_peaks]
+      camel: [desert]
+      ocelot: [jungle, bamboo_jungle, sparse_jungle]
+      panda: [jungle, bamboo_jungle]
+      fox: [taiga, "*taiga", grove, snowy_plains]
+      goat: [stony_peaks, snowy_slopes, frozen_peaks, jagged_peaks]
+      frog: [swamp, mangrove_swamp]
+      slime: [swamp, mangrove_swamp]
+    rare-encounters:
+      enabled: false
+      chance: 0.01
+      max-per-world: 2
+      health-multiplier: 1.5
+      damage-multiplier: 1.15
+      visible-name: true
+      bonus-drop:
+        item: diamond
+        amount: 1
+        chance: 0.1
+  sparse:
+    interval-seconds: 8
+    attempts-per-player: 1
+    max-attempts-per-cycle: 20
+    min-player-distance: 24
+    max-player-distance: 48
+    per-world-mob-cap: 35
+    natural-hostile-despawn-distance: 128
+    categories: [hostile, passive, aquatic]
+    disabled-mobs: []
+    mob-weights: {}
+    mob-biomes: {}
+    rare-encounters:
+      enabled: false
 
 # Entity type limits (max number of specific mob types can spawn)
 entity-type-limits:

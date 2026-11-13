@@ -161,6 +161,7 @@ class Piglin extends Monster {
     }
 
     public function onInteract(Player $player, Vector3 $clickPos): bool {
+        $this->setPersistenceRequired(true);
         if ($this->barterTicks > 0) return false;
 
         $item = $player->getInventory()->getItemInHand();

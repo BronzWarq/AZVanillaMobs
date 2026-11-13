@@ -1,8 +1,10 @@
 <?php
 declare(strict_types=1);
 
-namespace BeeAZ\AZVanillaMobsAudit;
+namespace BeeAZ\AZVanillaMobsSmoke;
 
+use BeeAZ\AZVanillaMobs\Main as AZVanillaMobsMain;
+use BeeAZ\AZVanillaMobs\spawner\SpawnProfile;
 use BeeAZ\AZVanillaMobs\entity\nether\MagmaCube;
 use BeeAZ\AZVanillaMobs\entity\overworld\{Cod, Creeper, Drowned, Phantom, Slime, SnowGolem, Villager, Zombie};
 use BeeAZ\AZVanillaMobs\item\FishBucket;
@@ -21,12 +23,12 @@ use pocketmine\plugin\PluginBase;
 use pocketmine\scheduler\ClosureTask;
 use pocketmine\world\World;
 
-final class AuditPlayer extends Player {
+final class SmokePlayer extends Player {
     private PlayerInventory $testInventory;
     public function __construct(private World $testWorld) {
         $this->testInventory = new PlayerInventory($this);
     }
-    public function getName(): string { return 'AZVanillaMobsAudit'; }
+    public function getName(): string { return 'AZVanillaMobsSmoke'; }
     public function getInventory(): PlayerInventory { return $this->testInventory; }
     public function getWorld(): World { return $this->testWorld; }
     public function isCreative(bool $literal = false): bool { return false; }
@@ -49,6 +51,29 @@ final class Smoke extends PluginBase {
             $server = $this->getServer();
             $plugin = $server->getPluginManager()->getPlugin('AZVanillaMobs');
             if ($plugin === null || !$plugin->isEnabled()) throw new \RuntimeException('AZVanillaMobs did not enable');
+            if (!$plugin instanceof AZVanillaMobsMain) throw new \RuntimeException('AZVanillaMobs loaded with an unexpected main class');
+            $commandMap = $server->getCommandMap();
+            foreach (['azsummon', 'azm', 'azkill'] as $command) {
+                if ($commandMap->getCommand($command) === null) throw new \RuntimeException("Missing command: $command");
+            }
+            if ($commandMap->getCommand('summon') instanceof \BeeAZ\AZVanillaMobs\command\SummonCommand) {
+                throw new \RuntimeException('AZVanillaMobs registered its summon command under the shared /summon name');
+            }
+            $checks[] = 'plugin command names avoid the shared summon name';
+            $plugin->getSleepTracker();
+            $profileConfig = $plugin->getConfig()->getAll();
+            $survivalProfile = SpawnProfile::resolve($profileConfig, 'world', $profileConfig['worlds']['world']);
+            if ($survivalProfile->get('interval-seconds') !== 5 || $survivalProfile->weight('warden') !== 0.0 ||
+                !$survivalProfile->allowsBiome('camel', 'minecraft:desert') || $survivalProfile->allowsBiome('camel', 'plains')) {
+                throw new \RuntimeException('Natural spawn profile defaults or biome rules are incorrect');
+            }
+            $malformedProfileConfig = $profileConfig;
+            $malformedProfileConfig['spawn-profiles']['smoke-invalid'] = ['disabled-mobs' => ['zombie', 1, []]];
+            $malformedProfile = SpawnProfile::resolve($malformedProfileConfig, 'world', ['dimension' => 'overworld', 'profile' => 'smoke-invalid']);
+            if ($malformedProfile->weight('zombie') !== 0.0 || $malformedProfile->weight('creeper') <= 0.0) {
+                throw new \RuntimeException('Malformed disabled-mobs entries were not safely ignored');
+            }
+            $checks[] = 'spawn profiles, biome rules, and sleep service registration';
             $world = $server->getWorldManager()->getDefaultWorld();
             if ($world === null) throw new \RuntimeException('No default world');
             $spawn = $world->getSpawnLocation();
@@ -65,6 +90,23 @@ final class Smoke extends PluginBase {
                 $mob->close();
             }
             $checks[] = 'configurable melee damage';
+
+            $rareMob = new Zombie($loc());
+            $rareMob->setNaturallySpawned(true);
+            $rareMob->setPersistenceRequired(true);
+            $rareMob->setRareEncounter(true, 2.0);
+            $rareMob->setRareBonusDrop(['item' => 'emerald', 'amount' => 2, 'chance' => 0.5]);
+            $rareMob->setMaxHealth(40);
+            $rareMob->setHealth(35);
+            $restoredRareMob = new Zombie($loc(), $rareMob->saveNBT());
+            if (!$restoredRareMob->isNaturallySpawned() || !$restoredRareMob->isPersistenceRequired() || !$restoredRareMob->isRareEncounter() ||
+                $restoredRareMob->getMaxHealth() !== 40 || $restoredRareMob->getHealth() !== 35.0 || $restoredRareMob->getAttackDamage() !== 18.0 ||
+                $restoredRareMob->getRareBonusDrop() !== ['item' => 'emerald', 'amount' => 2, 'chance' => 0.5]) {
+                throw new \RuntimeException('Natural, persistent, or rare mob NBT state did not round-trip');
+            }
+            $restoredRareMob->close();
+            $rareMob->close();
+            $checks[] = 'rare encounter modifiers and entity NBT persistence';
 
             $creeper = new Creeper($loc());
             $creeper->onUpdate($server->getTick() + 1);
@@ -84,7 +126,7 @@ final class Smoke extends PluginBase {
             }
             $fish = new Cod($loc());
             $fish->onUpdate($server->getTick() + 1);
-            $player = new AuditPlayer($world);
+            $player = new SmokePlayer($world);
             $player->getInventory()->setItemInHand(VanillaItems::WATER_BUCKET());
             if (!$fish->onInteract($player, new Vector3(0, 0, 0)) || !$fish->isClosed()) {
                 throw new \RuntimeException('Fish capture did not close fish');
@@ -132,23 +174,29 @@ final class Smoke extends PluginBase {
             $world->setBlock($water, VanillaBlocks::WATER());
             $world->setBlock($water->add(0, 1, 0), VanillaBlocks::WATER());
             $zombie = new Zombie($water);
+            $zombie->setNaturallySpawned(true);
+            $zombie->setPersistenceRequired(true);
+            $zombie->setRareEncounter(true, 1.5);
+            $zombie->setRareBonusDrop(['item' => 'emerald', 'amount' => 2, 'chance' => 0.5]);
             $zombie->setMaxHealth(30);
             $zombie->setHealth(25);
             (new \ReflectionProperty($zombie, 'conversionTicks'))->setValue($zombie, 599);
             $zombie->onUpdate($server->getTick() + 1);
             $drowned = array_values(array_filter($world->getEntities(), fn($entity) => $entity instanceof Drowned && !$entity->isClosed()));
-            if (count($drowned) !== 1 || $drowned[0]->getMaxHealth() !== 30 || $drowned[0]->getHealth() !== 25.0) {
-                throw new \RuntimeException('Zombie conversion lost health or failed');
+            if (count($drowned) !== 1 || $drowned[0]->getMaxHealth() !== 30 || $drowned[0]->getHealth() !== 25.0 ||
+                !$drowned[0]->isNaturallySpawned() || !$drowned[0]->isPersistenceRequired() || !$drowned[0]->isRareEncounter() ||
+                $drowned[0]->getRareDamageMultiplier() !== 1.5 || $drowned[0]->getRareBonusDrop() !== ['item' => 'emerald', 'amount' => 2, 'chance' => 0.5]) {
+                throw new \RuntimeException('Zombie conversion lost health or rare encounter state');
             }
             $drowned[0]->close();
             $world->setBlock($water, VanillaBlocks::AIR());
             $world->setBlock($water->add(0, 1, 0), VanillaBlocks::AIR());
             $checks[] = 'zombie to drowned conversion';
 
-            file_put_contents('azvanillamobs-audit.json', json_encode(['ok' => true, 'checks' => $checks], JSON_THROW_ON_ERROR));
+            file_put_contents($this->getDataFolder() . 'smoke-result.json', json_encode(['ok' => true, 'checks' => $checks], JSON_THROW_ON_ERROR));
             $this->getLogger()->info('PASS ' . implode(', ', $checks));
         } catch (\Throwable $error) {
-            file_put_contents('azvanillamobs-audit.json', json_encode(['ok' => false, 'checks' => $checks, 'error' => $error->getMessage()], JSON_THROW_ON_ERROR));
+            file_put_contents($this->getDataFolder() . 'smoke-result.json', json_encode(['ok' => false, 'checks' => $checks, 'error' => $error->getMessage()], JSON_THROW_ON_ERROR));
             $this->getLogger()->logException($error);
         }
         $this->getServer()->shutdown();

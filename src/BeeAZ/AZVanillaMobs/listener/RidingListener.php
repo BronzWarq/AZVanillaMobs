@@ -17,6 +17,8 @@ use pocketmine\network\mcpe\protocol\InteractPacket;
 use pocketmine\network\mcpe\protocol\InventoryTransactionPacket;
 use pocketmine\network\mcpe\protocol\MovePlayerPacket;
 use pocketmine\network\mcpe\protocol\types\inventory\UseItemOnEntityTransactionData;
+use pocketmine\event\player\PlayerQuitEvent;
+use pocketmine\entity\Entity;
 use pocketmine\math\Vector3;
 use pocketmine\item\StringToItemParser;
 use pocketmine\player\Player;
@@ -25,6 +27,9 @@ use ReflectionException;
 
 class RidingListener implements Listener
 {
+    /** @var array<int, Entity> Active mounts indexed by rider runtime ID. */
+    private static array $mountsByRider = [];
+
     private Main $plugin;
 
     public function __construct(Main $plugin)
@@ -36,12 +41,45 @@ class RidingListener implements Listener
     {
         $player = $event->getPlayer();
         if ($event->isSneaking()) {
-            foreach ($player->getWorld()->getEntities() as $entity) {
+            $mount = self::getMountForPlayer($player);
+            foreach ($mount === null ? [] : [$mount] as $entity) {
                 if (($entity instanceof Horse || $entity instanceof Donkey || $entity instanceof Mule || $entity instanceof Camel) && $entity->getRider() !== null && $entity->getRider()->getId() === $player->getId()) {
                     $entity->dismountPlayer();
-                    break;
                 }
             }
+        }
+    }
+
+    public static function setMount(Player $player, Entity $mount): void
+    {
+        self::$mountsByRider[$player->getId()] = $mount;
+    }
+
+    public static function clearMount(Player $player, Entity $mount): void
+    {
+        if ((self::$mountsByRider[$player->getId()] ?? null) === $mount) {
+            unset(self::$mountsByRider[$player->getId()]);
+        }
+    }
+
+    private static function getMountForPlayer(Player $player): ?Entity
+    {
+        $mount = self::$mountsByRider[$player->getId()] ?? null;
+        if ($mount === null || $mount->isClosed() || $mount->getWorld() !== $player->getWorld()) {
+            unset(self::$mountsByRider[$player->getId()]);
+            return null;
+        }
+        return $mount;
+    }
+
+    public function onPlayerQuit(PlayerQuitEvent $event): void
+    {
+        $player = $event->getPlayer();
+        $mount = self::getMountForPlayer($player);
+        if ($mount instanceof Horse || $mount instanceof Donkey || $mount instanceof Mule || $mount instanceof Camel) {
+            $mount->dismountPlayer();
+        } else {
+            unset(self::$mountsByRider[$player->getId()]);
         }
     }
 
@@ -51,7 +89,8 @@ class RidingListener implements Listener
         if ($packet instanceof PlayerAuthInputPacket) {
             $player = $event->getOrigin()->getPlayer();
             if ($player !== null) {
-                foreach ($player->getWorld()->getEntities() as $entity) {
+                $mount = self::getMountForPlayer($player);
+                foreach ($mount === null ? [] : [$mount] as $entity) {
                     if (($entity instanceof Horse || $entity instanceof Donkey || $entity instanceof Mule || $entity instanceof Camel) && $entity->getRider() !== null && $entity->getRider()->getId() === $player->getId()) {
                         $horseLocation = $entity->getLocation();
                         $seatHeight = 2.0;
@@ -132,7 +171,8 @@ class RidingListener implements Listener
             if ($packet->action === InteractPacket::ACTION_LEAVE_VEHICLE) {
                 $player = $event->getOrigin()->getPlayer();
                 if ($player !== null) {
-                    foreach ($player->getWorld()->getEntities() as $entity) {
+                    $mount = self::getMountForPlayer($player);
+                    foreach ($mount === null ? [] : [$mount] as $entity) {
                         if (($entity instanceof Horse || $entity instanceof Donkey || $entity instanceof Mule || $entity instanceof Camel) && $entity->getRider() !== null && $entity->getRider()->getId() === $player->getId()) {
                             $entity->dismountPlayer();
                             break;

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BeeAZ\AZVanillaMobs\entity\overworld;
 
 use BeeAZ\AZVanillaMobs\entity\Animal;
+use BeeAZ\AZVanillaMobs\listener\RidingListener;
 use pocketmine\player\Player;
 use pocketmine\network\mcpe\protocol\SetActorLinkPacket;
 use pocketmine\network\mcpe\protocol\types\entity\EntityLink;
@@ -91,6 +92,8 @@ class Camel extends Animal {
 
         $player->teleport($this->getLocation()->add(0, self::SEAT_HEIGHT, 0));
         $this->rider = $player;
+        RidingListener::setMount($player, $this);
+        $this->setPersistenceRequired(true);
 
         $seatVector = new Vector3(0, self::SEAT_HEIGHT, 0);
         $this->getNetworkProperties()->setVector3(EntityMetadataProperties::RIDER_SEAT_POSITION, $seatVector);
@@ -136,6 +139,7 @@ class Camel extends Animal {
 
         $player = $this->rider;
         $this->rider = null;
+        RidingListener::clearMount($player, $this);
 
         $player->setHasGravity(true);
         $player->getNetworkProperties()->setGenericFlag(EntityMetadataFlags::RIDING, false);

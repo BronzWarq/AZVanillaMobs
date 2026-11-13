@@ -92,6 +92,7 @@ class Sheep extends Animal {
     }
 
     public function onInteract(Player $player, Vector3 $clickPos): bool {
+        $this->setPersistenceRequired(true);
         $item = $player->getInventory()->getItemInHand();
 
         if ($item->getTypeId() === VanillaItems::SHEARS()->getTypeId()) {

@@ -8,6 +8,8 @@ use BeeAZ\AZVanillaMobs\entity\Monster;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\event\entity\EntityDamageEvent;
 use pocketmine\math\Vector3;
+use BeeAZ\AZVanillaMobs\Main;
+use pocketmine\Server;
 
 class Phantom extends Monster {
 
@@ -40,8 +42,21 @@ class Phantom extends Monster {
         $nearest = null;
         $minDist = 1600; 
 
+        $plugin = Server::getInstance()->getPluginManager()->getPlugin('AZVanillaMobs');
+        if (!$plugin instanceof Main) {
+            $this->targetPosition = null;
+            return;
+        }
+        $sleepRules = $plugin->getConfig()->get('phantom-sleep', []);
+        $requiredNights = is_array($sleepRules) && is_numeric($sleepRules['nights-without-sleep'] ?? null)
+            ? max(1, min(14, (int)$sleepRules['nights-without-sleep']))
+            : 3;
+
         foreach ($this->getWorld()->getPlayers() as $player) {
             if ($player->isCreative() || $player->isSpectator()) {
+                continue;
+            }
+            if (!$plugin->getSleepTracker()->isEligible($player, $this->getWorld(), $requiredNights)) {
                 continue;
             }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BeeAZ\AZVanillaMobs\listener;
 
 use BeeAZ\AZVanillaMobs\Main;
+use BeeAZ\AZVanillaMobs\entity\BaseMob;
 use BeeAZ\AZVanillaMobs\entity\overworld\WanderingTrader;
 use BeeAZ\AZVanillaMobs\entity\overworld\Llama;
 use BeeAZ\AZVanillaMobs\entity\Animal;
@@ -53,7 +54,7 @@ class LeashListener implements Listener
             {
                 LeashListener::tickLeashes();
             }
-        }, 1);
+        }, 2);
     }
 
     public function onEntitySpawn(EntitySpawnEvent $event): void
@@ -232,6 +233,9 @@ class LeashListener implements Listener
 
     public static function attachLeash(Entity $entity, int $holderId): void
     {
+        if ($entity instanceof BaseMob) {
+            $entity->setPersistenceRequired(true);
+        }
         try {
             $entity->getNetworkProperties()->setGenericFlag(EntityMetadataFlags::LEASHED, true);
             $entity->getNetworkProperties()->setLong(EntityMetadataProperties::LEAD_HOLDER_EID, $holderId);
@@ -524,11 +528,7 @@ class LeashListener implements Listener
         }
         if (isset(self::$entityLeashedEntities[$entityId])) {
             $holderId = self::$entityLeashedEntities[$entityId];
-            foreach ($entity->getWorld()->getEntities() as $e) {
-                if ($e->getId() === $holderId) {
-                    return $e->getLocation();
-                }
-            }
+            return $entity->getWorld()->getEntity($holderId)?->getLocation();
         }
         return null;
     }

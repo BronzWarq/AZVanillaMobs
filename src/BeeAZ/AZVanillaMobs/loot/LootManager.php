@@ -10,8 +10,17 @@ use pocketmine\item\Item;
 use pocketmine\item\VanillaItems;
 use pocketmine\item\StringToItemParser;
 use BeeAZ\AZVanillaMobs\entity\BaseMob;
+use BeeAZ\AZVanillaMobs\Main;
+use pocketmine\event\entity\EntityDamageByEntityEvent;
+use pocketmine\entity\projectile\Projectile;
+use pocketmine\player\Player;
 
 class LootManager implements Listener {
+
+    /** @var array<string, true> */
+    private array $invalidBonusItems = [];
+
+    public function __construct(private Main $plugin) {}
 
     public function onEntityDeath(EntityDeathEvent $event): void {
         $entity = $event->getEntity();
@@ -233,8 +242,34 @@ class LootManager implements Listener {
                 break;
         }
 
+        $rareBonusDrops = [];
+        $bonus = $entity->isRareEncounter() ? $entity->getRareBonusDrop() : null;
+        if ($bonus !== null && $this->wasKilledByPlayer($entity)) {
+            $chance = max(0.0, min(1.0, $bonus['chance']));
+            if ($chance >= 1.0 || ($chance > 0.0 && mt_rand(1, 100000) <= (int)round($chance * 100000))) {
+                $item = StringToItemParser::getInstance()->parse($bonus['item']);
+                if ($item === null || $item->isNull()) {
+                    if (!isset($this->invalidBonusItems[$bonus['item']])) {
+                        $this->plugin->getLogger()->warning('Rare encounter bonus item "' . $bonus['item'] . '" is not recognized; no bonus drop will be created.');
+                        $this->invalidBonusItems[$bonus['item']] = true;
+                    }
+                } else {
+                    $remaining = max(1, min(64, $bonus['amount']));
+                    while ($remaining > 0) {
+                        $stack = clone $item;
+                        $count = min($remaining, $stack->getMaxStackSize());
+                        $stack->setCount($count);
+                        $rareBonusDrops[] = $stack;
+                        $remaining -= $count;
+                    }
+                }
+            }
+        }
+
         if (!empty($drops)) {
-            $event->setDrops($drops);
+            $event->setDrops(array_merge($drops, $rareBonusDrops));
+        } elseif ($rareBonusDrops !== []) {
+            $event->setDrops(array_merge($event->getDrops(), $rareBonusDrops));
         }
 
         $event->setXpDropAmount($entity->getXpDropAmount());
@@ -246,5 +281,18 @@ class LootManager implements Listener {
             $item->setCount($count);
         }
         return $item;
+    }
+
+    private function wasKilledByPlayer(BaseMob $entity): bool
+    {
+        $damage = $entity->getLastDamageCause();
+        if (!$damage instanceof EntityDamageByEntityEvent) {
+            return false;
+        }
+        $damager = $damage->getDamager();
+        if ($damager instanceof Projectile) {
+            $damager = $damager->getOwningEntity();
+        }
+        return $damager instanceof Player;
     }
 }

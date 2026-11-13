@@ -1,8 +1,8 @@
 # 🐾 AZVanillaMobs
 
-Fork version **1.0.2** for PocketMine-MP 5.44.x, tested on 5.44.3 with PHP 8.4.16. This release fixes combat, trading, and mob behavior; see the [release notes](https://github.com/BronzWarq/AZVanillaMobs/blob/master/docs/releases/v1.0.2.md) for the full list of changes. A fresh installation includes the default `world` in the natural spawning configuration. Existing `config.yml` files are not overwritten: if your main world has a different name, add it to `worlds` manually.
+Fork version **1.0.3** for PocketMine-MP 5.44.x, tested on 5.44.3 with PHP 8.4.16. This release adds configurable survival spawning, persistent phantom sleep history, rare encounters, and performance improvements; see the [release notes](https://github.com/BronzWarq/AZVanillaMobs/blob/master/docs/releases/v1.0.3.md) for details. A fresh installation includes default world profiles. Existing `config.yml` files are not overwritten: if your world names differ, add them to `worlds` manually.
 
-The plugin uses the standard `EntityDeathEvent` and is compatible with [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1) for money rewards. Neither RPGMoney nor EconomyAPI is required for the mobs themselves. A zombie kill has been tested; other mob types and natural spawning still need testing on your server. Installing another plugin that registers the same mob types may cause conflicts.
+The plugin uses the standard `EntityDeathEvent` and is compatible with [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1) for money rewards. Neither RPGMoney nor EconomyAPI is required for the mobs themselves. Installing another plugin that registers the same mob types may cause conflicts. The release was smoke-tested on PocketMine-MP 5.44.3; live natural spawn rates, multi-day sleep behavior, trading with real clients, and multiplayer performance need server-specific observation.
 
 Download the PHAR from the [fork's releases](https://github.com/BronzWarq/AZVanillaMobs/releases). To build it yourself, use PHP 8.4 with Phar:
 
@@ -50,7 +50,11 @@ The PHAR and its SHA-256 checksum will appear in `dist/`. The original author is
 - Hostile mobs spawn at night
 - Aquatic mobs spawn in water
 - Nether and End exclusive spawning
-- Nighttime Phantom spawning above the ground
+- Nighttime Phantom spawning above the ground after the configured number of days without sleep
+- Per-world spawn profiles with mob weights, biome restrictions, category controls, and spawn caps
+- Bounded spawn attempts that use only already-loaded chunks
+- Optional rare hostile encounters with persistent health/damage settings and bonus drops
+- Distant natural hostile mobs despawn without removing named, interacted, leashed, mounted, or rare mobs
 
 ## 🌊 Aquatic Features
 - Improved fish AI and movement
@@ -76,6 +80,7 @@ The PHAR and its SHA-256 checksum will appear in `dist/`. The original author is
 - Cat taming system
 - Villager professions and leveling
 - Piglin bartering
+- Tamed, interacted, leashed, and mounted mobs are saved as persistent entities
 
 ---
 
@@ -120,8 +125,10 @@ AZVanillaMobs is built specifically for PocketMine-MP performance:
 
 | Command | Description |
 |---|---|
-| `/summon <mob> [amount]` | Spawn a mob |
+| `/azsummon <mob> [amount]` (`/azmob`) | Spawn 1–20 AZVanillaMobs using a dedicated command name |
 | `/azkill <@e|mob>` | Remove plugin entities |
+| `/azm status` | Inspect mob counts, spawn cycle timing, and common spawn rejection reasons |
+| `/azm reload` | Reload configuration and report invalid settings to the server log |
 
 ---
 
@@ -129,13 +136,42 @@ AZVanillaMobs is built specifically for PocketMine-MP performance:
 
 ```yaml
 worlds:
-  "world": "overworld"
-  "nether": "nether"
-  "the_end": "the_end"
+  "world": {dimension: "overworld", profile: "survival"}
+  "nether": {dimension: "nether", profile: "survival"}
+  "the_end": {dimension: "the_end", profile: "survival"}
 
 global-mob-cap: 200
 per-world-mob-cap: 70
+
+phantom-sleep:
+  nights-without-sleep: 3
+
+spawn-profiles:
+  survival:
+    interval-seconds: 5
+    attempts-per-player: 1
+    max-attempts-per-cycle: 40
+    min-player-distance: 24
+    max-player-distance: 48
+    per-world-mob-cap: 70
+    natural-hostile-despawn-distance: 128
+    categories: [hostile, passive, aquatic]
+    mob-weights:
+      zombie: 10
+      skeleton: 10
+      phantom: 2
+    mob-biomes:
+      husk: [desert, "badlands*"]
+    rare-encounters:
+      enabled: false
+      chance: 0.01
+      max-per-world: 2
+      health-multiplier: 1.5
+      damage-multiplier: 1.15
+      bonus-drop: {item: diamond, amount: 1, chance: 0.1}
 ```
+
+Legacy world values such as `"world": "overworld"` remain supported. See [the survival-server guide](docs/SURVIVAL_GUIDE.md) for profile tuning and optional RPGMoney setup.
 
 ---
 

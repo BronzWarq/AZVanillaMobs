@@ -82,6 +82,7 @@ abstract class Animal extends BaseMob
 
     public function onInteract(Player $player, Vector3 $clickPos): bool
     {
+        $this->setPersistenceRequired(true);
         $item = $player->getInventory()->getItemInHand();
 
         $bucketId = match (static::class) {

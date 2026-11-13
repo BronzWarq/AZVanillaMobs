@@ -10,12 +10,31 @@ use pocketmine\world\Position;
 use pocketmine\world\World;
 use pocketmine\entity\Location;
 use BeeAZ\AZVanillaMobs\entity\BaseMob;
+use BeeAZ\AZVanillaMobs\entity\Monster;
+use pocketmine\player\Player;
 
 class SpawnerTask extends Task
 {
 
     private int $tickCounter = 0;
     private \BeeAZ\AZVanillaMobs\Main $plugin;
+    /** @var array<string, int> */
+    private array $worldMobCounts = [];
+    /** @var array<class-string, int> */
+    private array $entityTypeCounts = [];
+    /** @var array<string, int> */
+    private array $rareMobCounts = [];
+    private int $totalMobs = 0;
+    private int $spawnAttempts = 0;
+    private int $successfulSpawns = 0;
+    private int $failedSpawns = 0;
+    private int $naturalDespawns = 0;
+    private int $lastCycleAttempts = 0;
+    private int $lastCycleSpawns = 0;
+    private float $lastCycleMilliseconds = 0.0;
+    /** @var array<string, int> */
+    private array $rejections = [];
+    private string $lastRejectionReason = 'no-valid-position';
 
     public function __construct(\BeeAZ\AZVanillaMobs\Main $plugin)
     {
@@ -25,189 +44,248 @@ class SpawnerTask extends Task
     public function onRun(): void
     {
         $this->tickCounter++;
-
-        if ($this->tickCounter % 5 !== 0) return;
-
-        $config = $this->plugin->getConfig();
-        $worldsConfig = $config->get("worlds", ["world" => "overworld"]);
-        $globalCap = (int) $config->get("global-mob-cap", 200);
-        $perWorldCap = (int) $config->get("per-world-mob-cap", 70);
-
-        $totalMobs = 0;
-        foreach (Server::getInstance()->getWorldManager()->getWorlds() as $world) {
-            $totalMobs += $this->countWorldMobs($world);
+        $config = $this->plugin->getConfig()->getAll();
+        $worldsConfig = $config['worlds'] ?? ['world' => 'overworld'];
+        if (!is_array($worldsConfig)) {
+            $worldsConfig = [];
         }
 
-        if ($totalMobs >= $globalCap) return;
-
+        $dueWorlds = [];
         foreach (Server::getInstance()->getWorldManager()->getWorlds() as $world) {
-            $folderName = $world->getFolderName();
-            if (!isset($worldsConfig[$folderName])) continue;
+            $worldName = $world->getFolderName();
+            $entry = $worldsConfig[$worldName] ?? null;
+            if (!is_string($entry) && !is_array($entry)) {
+                continue;
+            }
+            $dimension = SpawnProfile::dimension($entry);
+            if ($dimension === null) {
+                continue;
+            }
+            $profile = SpawnProfile::resolve($config, $worldName, $entry);
+            if (($profile->get('enabled') ?? true) === false || $this->tickCounter % $profile->get('interval-seconds') !== 0) {
+                continue;
+            }
+            $dueWorlds[] = [$world, $dimension, $profile];
+        }
+        if ($dueWorlds === []) {
+            return;
+        }
 
-            $dimensionType = $worldsConfig[$folderName];
+        $startedAt = microtime(true);
+        $this->lastCycleAttempts = 0;
+        $this->lastCycleSpawns = 0;
+        $this->refreshPopulationSnapshot($config, $worldsConfig);
+        $globalCap = is_numeric($config['global-mob-cap'] ?? null)
+            ? max(1, (int)$config['global-mob-cap'])
+            : 200;
 
+        foreach ($dueWorlds as [$world, $dimension, $profile]) {
+            $worldName = $world->getFolderName();
             $players = $world->getPlayers();
-            if (empty($players)) continue;
-
-            $worldMobs = $this->countWorldMobs($world);
-            if ($worldMobs >= $perWorldCap) continue;
-
+            if ($players === []) {
+                continue;
+            }
+            $worldCap = (int)$profile->get('per-world-mob-cap');
+            $worldAttempts = 0;
+            $worldAttemptCap = (int)$profile->get('max-attempts-per-cycle');
             foreach ($players as $player) {
-                if ($totalMobs >= $globalCap || $worldMobs >= $perWorldCap) break;
-                if ($this->attemptSpawn($player->getPosition(), $dimensionType)) {
-                    ++$totalMobs;
-                    ++$worldMobs;
+                for ($attempt = 0; $attempt < (int)$profile->get('attempts-per-player'); ++$attempt) {
+                    if ($this->totalMobs >= $globalCap || ($this->worldMobCounts[$worldName] ?? 0) >= $worldCap || $worldAttempts >= $worldAttemptCap) {
+                        break 2;
+                    }
+                    ++$worldAttempts;
+                    ++$this->lastCycleAttempts;
+                    ++$this->spawnAttempts;
+                    if ($this->attemptSpawn($player, $dimension, $profile)) {
+                        ++$this->lastCycleSpawns;
+                        ++$this->successfulSpawns;
+                    } else {
+                        ++$this->failedSpawns;
+                        $reason = $this->lastRejectionReason;
+                        $this->rejections[$reason] = ($this->rejections[$reason] ?? 0) + 1;
+                    }
                 }
             }
         }
+        $this->lastCycleMilliseconds = (microtime(true) - $startedAt) * 1000.0;
     }
 
-    private function countWorldMobs(World $world): int {
-        $count = 0;
-        foreach ($world->getEntities() as $entity) {
-            if ($entity instanceof BaseMob && !$entity->isFlaggedForDespawn()) ++$count;
-        }
-        return $count;
-    }
+    /** @param array<string, mixed> $config @param array<string, mixed> $worldsConfig */
+    private function refreshPopulationSnapshot(array $config, array $worldsConfig): void
+    {
+        $this->worldMobCounts = [];
+        $this->entityTypeCounts = [];
+        $this->rareMobCounts = [];
+        $this->totalMobs = 0;
 
-    private function getEntityTypeCount(string $entityClass): int {
-        $count = 0;
         foreach (Server::getInstance()->getWorldManager()->getWorlds() as $world) {
+            $worldName = $world->getFolderName();
+            $worldEntry = $worldsConfig[$worldName] ?? null;
+            $profile = null;
+            if ((is_string($worldEntry) || is_array($worldEntry)) && SpawnProfile::dimension($worldEntry) !== null) {
+                $resolvedProfile = SpawnProfile::resolve($config, $worldName, $worldEntry);
+                if (($resolvedProfile->get('enabled') ?? true) !== false) {
+                    $profile = $resolvedProfile;
+                }
+            }
+            $players = $world->getPlayers();
+            $despawnDistance = $profile !== null ? (int)$profile->get('natural-hostile-despawn-distance') : 0;
+            $despawnDistanceSquared = $despawnDistance * $despawnDistance;
+
             foreach ($world->getEntities() as $entity) {
-                if ($entity instanceof $entityClass) {
-                    $count++;
+                if (!($entity instanceof BaseMob) || $entity->isFlaggedForDespawn()) {
+                    continue;
+                }
+                if ($entity instanceof Monster && $entity->isNaturallySpawned() && !$entity->isPersistenceRequired() && !$entity->isRareEncounter() && $players !== [] && $despawnDistance > 0) {
+                    $nearestDistanceSquared = INF;
+                    foreach ($players as $player) {
+                        $nearestDistanceSquared = min($nearestDistanceSquared, $entity->getPosition()->distanceSquared($player->getPosition()));
+                    }
+                    if ($nearestDistanceSquared >= $despawnDistanceSquared) {
+                        $entity->flagForDespawn();
+                        ++$this->naturalDespawns;
+                        continue;
+                    }
+                }
+                ++$this->totalMobs;
+                ++$this->worldMobCounts[$worldName];
+                ++$this->entityTypeCounts[$entity::class];
+                if ($entity->isRareEncounter()) {
+                    ++$this->rareMobCounts[$worldName];
                 }
             }
         }
-        return $count;
     }
 
-    private function getOverworldBiomeType(int $x, int $z, int $y, \pocketmine\world\World $world): string
+    /** @return array<string, mixed> */
+    public function getStatusSnapshot(): array
     {
-        $sandCount = 0;
-        $snowCount = 0;
-        $grassCount = 0;
-
-        for ($dx = -2; $dx <= 2; $dx++) {
-            for ($dz = -2; $dz <= 2; $dz++) {
-                $className = get_class($world->getBlockAt($x + $dx, $y, $z + $dz));
-
-                if ($className === 'pocketmine\\block\\Sand' || $className === 'pocketmine\\block\\RedSand') {
-                    $sandCount++;
-                    if ($sandCount > 12) return 'desert';
-                } else if ($className === 'pocketmine\\block\\Snow' || $className === 'pocketmine\\block\\SnowLayer' || $className === 'pocketmine\\block\\Ice') {
-                    $snowCount++;
-                    if ($snowCount > 12) return 'snow';
-                } else if (strpos($className, 'Grass') !== false) {
-                    $grassCount++;
-                    if ($grassCount > 10) return 'grass';
-                }
-            }
-        }
-
-        return ($sandCount > 8) ? 'desert' : (($snowCount > 8) ? 'snow' : (($grassCount > 5) ? 'grass' : 'generic'));
+        return [
+            'total' => $this->totalMobs,
+            'worlds' => $this->worldMobCounts,
+            'types' => $this->entityTypeCounts,
+            'rare' => $this->rareMobCounts,
+            'attempts' => $this->spawnAttempts,
+            'spawned' => $this->successfulSpawns,
+            'failed' => $this->failedSpawns,
+            'despawned' => $this->naturalDespawns,
+            'last-cycle-attempts' => $this->lastCycleAttempts,
+            'last-cycle-spawns' => $this->lastCycleSpawns,
+            'last-cycle-ms' => round($this->lastCycleMilliseconds, 2),
+            'rejections' => $this->rejections,
+        ];
     }
 
-    private function attemptSpawn(Position $pos, string $dimensionType): bool
+    private function reject(string $reason): bool
     {
-        $world = $pos->getWorld();
-        $x = $pos->getFloorX() + mt_rand(-24, 24);
-        $z = $pos->getFloorZ() + mt_rand(-24, 24);
+        $this->lastRejectionReason = $reason;
+        return false;
+    }
 
+    private function attemptSpawn(Player $player, string $dimensionType, SpawnProfile $profile): bool
+    {
+        $world = $player->getWorld();
+        $origin = $player->getPosition();
+        $minDistance = (int)$profile->get('min-player-distance');
+        $maxDistance = (int)$profile->get('max-player-distance');
+        $radius = mt_rand($minDistance * 100, max($minDistance * 100, $maxDistance * 100)) / 100;
+        $angle = mt_rand(0, 35999) / 100;
+        $x = (int)floor($origin->x + cos(deg2rad($angle)) * $radius);
+        $z = (int)floor($origin->z + sin(deg2rad($angle)) * $radius);
         $chunkX = $x >> 4;
         $chunkZ = $z >> 4;
-        if (!$world->isChunkGenerated($chunkX, $chunkZ)) {
-            return false;
+        if (!$world->isChunkGenerated($chunkX, $chunkZ) || !$world->isChunkLoaded($chunkX, $chunkZ)) {
+            return $this->reject('target-chunk-not-loaded');
         }
 
+        $isOverworld = $dimensionType === 'overworld';
+        $isWater = false;
+        $isOceanBiome = false;
+        $biomeName = '';
         $list = [];
-        $category = '';
+        $category = 'hostile';
         $spawnY = null;
+        $netherLavaSurfaceY = null;
 
-        if ($dimensionType === "nether") {
+        if ($dimensionType === 'nether') {
             $list = $this->plugin->spawnerLists['nether'] ?? [];
-            $category = 'nether';
-
-            $spawnY = null;
+            $surfaceY = $world->getHighestBlockAt($x, $z);
+            if ($surfaceY !== null && $world->getBlockAt($x, $surfaceY, $z) instanceof \pocketmine\block\Lava) {
+                $netherLavaSurfaceY = $surfaceY;
+            }
             $startY = mt_rand(35, 95);
-            for ($tryY = $startY; $tryY >= 28; $tryY--) {
-                $blockAtY = $world->getBlockAt($x, $tryY, $z);
-                $blockAbove = $world->getBlockAt($x, $tryY + 1, $z);
-                $blockBelow = $world->getBlockAt($x, $tryY - 1, $z);
-                
-                if ($blockAtY->isTransparent() && !($blockAtY instanceof \pocketmine\block\Lava) &&
-                    $blockAbove->isTransparent() && !($blockAbove instanceof \pocketmine\block\Lava) &&
-                    $blockBelow->isSolid() && !($blockBelow instanceof \pocketmine\block\Lava)) {
+            for ($tryY = $startY; $tryY >= 28; --$tryY) {
+                if ($this->isSafeNetherPosition($world, $x, $tryY, $z)) {
                     $spawnY = $tryY;
                     break;
                 }
             }
             if ($spawnY === null) {
-                for ($tryY = $startY + 1; $tryY <= 105; $tryY++) {
-                    $blockAtY = $world->getBlockAt($x, $tryY, $z);
-                    $blockAbove = $world->getBlockAt($x, $tryY + 1, $z);
-                    $blockBelow = $world->getBlockAt($x, $tryY - 1, $z);
-                    
-                    if ($blockAtY->isTransparent() && !($blockAtY instanceof \pocketmine\block\Lava) &&
-                        $blockAbove->isTransparent() && !($blockAbove instanceof \pocketmine\block\Lava) &&
-                        $blockBelow->isSolid() && !($blockBelow instanceof \pocketmine\block\Lava)) {
+                for ($tryY = $startY + 1; $tryY <= 105; ++$tryY) {
+                    if ($this->isSafeNetherPosition($world, $x, $tryY, $z)) {
                         $spawnY = $tryY;
                         break;
                     }
                 }
             }
-            
-            if ($spawnY === null) return false;
-        } elseif ($dimensionType === "the_end") {
-            $list = $this->plugin->spawnerLists['the_end'] ?? [];
-            $category = 'the_end';
-
-            $y = $world->getHighestBlockAt($x, $z);
-            if ($y === null || $y < 10) return false;
-
-            $block = $world->getBlockAt($x, $y, $z);
-            $checkBlock = $world->getBlockAt($x, $y + 1, $z);
-            $checkBlock2 = $world->getBlockAt($x, $y + 2, $z);
-
-            if (!$checkBlock->isFullCube() && !$checkBlock2->isFullCube()) {
-                $spawnY = $y + 2;
-            } else {
-                return false;
-            }
-        } else {
-            $y = $world->getHighestBlockAt($x, $z);
-            if ($y === null || $y < 0) return false;
-
-            $block = $world->getBlockAt($x, $y, $z);
-            $isWater = $block instanceof \pocketmine\block\Water;
-
-            $light = $world->getBlockLightAt($x, $y + 1, $z);
-            $time = $world->getTimeOfDay();
-            $isNight = $time >= World::TIME_NIGHT && $time < World::TIME_SUNRISE;
-
-            $isRaining = \BeeAZ\AZVanillaMobs\listener\EventListener::isWorldRaining($world);
-
-            if ($isWater) {
-                $list = $this->plugin->spawnerLists['overworld_hostile'] ?? [];
-                $category = 'overworld_hostile';
-            } else {
-                if (($isNight || $isRaining) && $light <= 7) {
-                    $list = $this->plugin->spawnerLists['overworld_hostile'] ?? [];
-                    $category = 'overworld_hostile';
+            if ($spawnY === null) {
+                if ($netherLavaSurfaceY !== null) {
+                    $spawnY = $netherLavaSurfaceY + 1;
+                    $list = [\BeeAZ\AZVanillaMobs\entity\nether\Strider::class];
                 } else {
-                    $list = $this->plugin->spawnerLists['overworld_passive'] ?? [];
-                    $category = 'overworld_passive';
+                    return $this->reject('no-safe-nether-floor');
                 }
             }
+        } elseif ($dimensionType === 'the_end') {
+            $list = $this->plugin->spawnerLists['the_end'] ?? [];
+            $topY = $world->getHighestBlockAt($x, $z);
+            if ($topY === null || $topY < 10) {
+                return $this->reject('no-end-surface');
+            }
+            $spawnY = $topY + 1;
+            if (!$world->getBlockAt($x, $spawnY, $z)->isTransparent() || !$world->getBlockAt($x, $spawnY + 1, $z)->isTransparent()) {
+                return $this->reject('blocked-end-surface');
+            }
+        } else {
+            $topY = $world->getHighestBlockAt($x, $z);
+            if ($topY === null) {
+                return $this->reject('no-overworld-surface');
+            }
+            $surface = $world->getBlockAt($x, $topY, $z);
+            $isWater = $surface instanceof \pocketmine\block\Water;
+            $time = $world->getTimeOfDay();
+            $isNight = $time >= World::TIME_NIGHT && $time < World::TIME_SUNRISE;
+            $isRaining = \BeeAZ\AZVanillaMobs\listener\EventListener::isWorldRaining($world);
+            $light = $world->getBlockLightAt($x, $isWater ? $topY + 1 : $topY + 1, $z);
 
-            $spawnY = $isWater ? $y : $y + 1;
+            if ($isWater) {
+                $list = array_merge(
+                    $this->plugin->spawnerLists['overworld_hostile'] ?? [],
+                    $this->plugin->spawnerLists['overworld_passive'] ?? []
+                );
+                $category = 'aquatic';
+                $spawnY = $topY;
+            } elseif (($isNight || $isRaining) && $light <= 7) {
+                $list = $this->plugin->spawnerLists['overworld_hostile'] ?? [];
+                $category = 'hostile';
+                $spawnY = $topY + 1;
+            } else {
+                $list = $this->plugin->spawnerLists['overworld_passive'] ?? [];
+                $category = 'passive';
+                $spawnY = $topY + 1;
+            }
+            $biomeName = SpawnProfile::normalizeBiome($world->getBiome($x, $topY, $z)->getName());
+            $isOceanBiome = str_contains($biomeName, 'ocean');
+        }
+
+        if (!$profile->categoryEnabled($category) || $spawnY === null || $list === []) {
+            return $this->reject('category-disabled-or-empty');
         }
 
         $freshwaterMobs = [
             \BeeAZ\AZVanillaMobs\entity\overworld\Axolotl::class,
             \BeeAZ\AZVanillaMobs\entity\overworld\Tadpole::class,
         ];
-
         $oceanMobs = [
             \BeeAZ\AZVanillaMobs\entity\overworld\Dolphin::class,
             \BeeAZ\AZVanillaMobs\entity\overworld\Guardian::class,
@@ -217,189 +295,209 @@ class SpawnerTask extends Task
             \BeeAZ\AZVanillaMobs\entity\overworld\Pufferfish::class,
             \BeeAZ\AZVanillaMobs\entity\overworld\TropicalFish::class,
         ];
-
         $anyWaterMobs = [
             \BeeAZ\AZVanillaMobs\entity\overworld\Squid::class,
             \BeeAZ\AZVanillaMobs\entity\overworld\GlowSquid::class,
             \BeeAZ\AZVanillaMobs\entity\overworld\Turtle::class,
         ];
 
-        if (!empty($list) && $spawnY !== null) {
-
-            $filteredList = [];
-            foreach ($list as $c) {
-                if ($dimensionType === 'nether' || $dimensionType === 'the_end') {
-                    $filteredList[] = $c;
-                    continue;
-                }
-
-                $blockBelow = $world->getBlockAt($x, (int)$spawnY - 1, $z);
-                $spawnBlock = $world->getBlockAt($x, (int)$spawnY, $z);
-                $isWater = $spawnBlock instanceof \pocketmine\block\Water || $blockBelow instanceof \pocketmine\block\Water;
-                $isLava = $spawnBlock instanceof \pocketmine\block\Lava || $blockBelow instanceof \pocketmine\block\Lava;
-
-                if ($isLava) {
-                    continue;
-                }
-
-                $isFreshwater = false;
-                $isOcean = false;
-                $biomeType = $this->getOverworldBiomeType($x, $z, (int)$spawnY - 1, $world);
-
-                if ($isWater) {
-                    $hasSeagrass = false;
-                    for ($dx = -1; $dx <= 1; $dx++) {
-                        for ($dz = -1; $dz <= 1; $dz++) {
-                            $className = get_class($world->getBlockAt($x + $dx, (int)$spawnY - 1, $z + $dz));
-                            if (strpos($className, 'Seagrass') !== false || strpos($className, 'KelpPlant') !== false) {
-                                $hasSeagrass = true;
-                                break 2;
-                            }
-                        }
-                    }
-
-                    if ($hasSeagrass) {
-                        $isOcean = true;
-                    } else {
-                        $isFreshwater = true;
-                    }
-                }
-
-                $parts = explode('\\', $c);
-                $mobName = strtolower(array_pop($parts));
-
-                if (in_array($c, $freshwaterMobs)) {
-                    if ($isFreshwater) {
-                        $filteredList[] = $c;
-                    }
-                } else if (in_array($c, $oceanMobs)) {
-                    if ($isOcean) {
-                        $filteredList[] = $c;
-                    }
-                } else if (in_array($c, $anyWaterMobs)) {
-                    if ($isWater) {
-                        $filteredList[] = $c;
-                    }
-                } else {
-                    if ($mobName === 'drowned') {
-                        if ($isWater) $filteredList[] = $c;
-                    } else if (!$isWater && !$isLava) {
-                        if ($mobName === 'husk') {
-                            if ($biomeType === 'desert') $filteredList[] = $c;
-                        } else if ($mobName === 'stray') {
-                            if ($biomeType === 'snow') $filteredList[] = $c;
-                        } else if ($mobName === 'phantom') {
-                            $time = $world->getTimeOfDay();
-                            $isNight = $time >= World::TIME_NIGHT && $time < World::TIME_SUNRISE;
-                            if ($isNight && $spawnY >= 30) $filteredList[] = $c;
-                        } else if ($mobName === 'cavespider') {
-                            $light = $world->getBlockLightAt($x, (int)$spawnY, $z);
-                            if ($light <= 7) $filteredList[] = $c;
-                        } else if ($mobName === 'bat') {
-                            $time = $world->getTimeOfDay();
-                            $isNight = $time >= World::TIME_NIGHT && $time < World::TIME_SUNRISE;
-                            $light = $world->getBlockLightAt($x, (int)$spawnY, $z);
-                            if ($isNight && $light <= 3) $filteredList[] = $c;
-                        } else if (in_array($mobName, ['horse', 'donkey', 'mule', 'llama', 'traderllama', 'wolf', 'fox'])) {
-                            if ($biomeType === 'grass') $filteredList[] = $c;
-                        } else if (in_array($mobName, ['pig', 'cow', 'sheep', 'chicken'])) {
-                            if ($biomeType !== 'desert' && $biomeType !== 'snow') $filteredList[] = $c;
-                        } else if ($mobName === 'ocelot') {
-                            if ($biomeType === 'grass') $filteredList[] = $c;
-                        } else if ($mobName === 'cat') {
-                            if ($biomeType === 'grass') $filteredList[] = $c;
-                        } else if ($mobName === 'panda') {
-                            if ($biomeType === 'grass') $filteredList[] = $c;
-                        } else if (in_array($mobName, ['spider', 'zombie', 'skeleton', 'creeper', 'witch', 'silverfish', 'enderman', 'vindicator', 'evoker', 'pillager', 'ravager', 'vex', 'zombievillager'])) {
-                            $filteredList[] = $c;
-                        } else if ($mobName === 'slime') {
-                            if ($spawnY < 40) $filteredList[] = $c;
-                        } else if (in_array($mobName, ['goat', 'sniffer', 'camel'])) {
-                            if ($biomeType === 'grass' || $biomeType === 'generic') $filteredList[] = $c;
-                        } else if (in_array($mobName, ['frog'])) {
-                            if ($biomeType === 'grass') $filteredList[] = $c;
-                        } else if (in_array($mobName, ['villager', 'irongolem', 'snowgolem', 'wanderingtrader', 'allay', 'bee'])) {
-                            if ($category === 'overworld_passive') $filteredList[] = $c;
-                        } else {
-                            if ($category === 'overworld_passive') $filteredList[] = $c;
-                        }
-                    }
-                }
-            }
-
-            if (empty($filteredList)) return false;
-            $class = $filteredList[array_rand($filteredList)];
-
-            if ($class === \BeeAZ\AZVanillaMobs\entity\nether\Ghast::class) {
-                $valid = true;
-                for ($dx = -1; $dx <= 2; $dx++) {
-                    for ($dy = 0; $dy <= 3; $dy++) {
-                        for ($dz = -1; $dz <= 2; $dz++) {
-                            $checkBlock = $world->getBlockAt($x + $dx, $spawnY + $dy, $z + $dz);
-                            if (!$checkBlock->isTransparent() || $checkBlock instanceof \pocketmine\block\Lava) {
-                                $valid = false;
-                                break 2;
-                            }
-                        }
-                    }
-                }
-                if (!$valid) {
-                    $filteredWithoutGhast = array_filter($filteredList, fn($c) => $c !== \BeeAZ\AZVanillaMobs\entity\nether\Ghast::class);
-                    if (!empty($filteredWithoutGhast)) {
-                        $class = $filteredWithoutGhast[array_rand($filteredWithoutGhast)];
-                    } else {
-                        return false;
-                    }
-                }
-            }
-
-            $height = 2;
-            if (strpos($class, 'Enderman') !== false) {
-                $height = 3;
-            }
-            if ($height > 2) {
-                $valid = true;
-                for ($h = 2; $h < $height; $h++) {
-                    $checkBlock = $world->getBlockAt($x, $spawnY + $h, $z);
-                    if (!$checkBlock->isTransparent() || $checkBlock instanceof \pocketmine\block\Lava) {
-                        $valid = false;
-                        break;
-                    }
-                }
-                if (!$valid) {
-                    $filteredShort = array_filter($filteredList, fn($c) => strpos($c, 'Enderman') === false && $c !== \BeeAZ\AZVanillaMobs\entity\nether\Ghast::class);
-                    if (!empty($filteredShort)) {
-                        $class = $filteredShort[array_rand($filteredShort)];
-                    } else {
-                        return false;
-                    }
-                }
-            }
-
-            $parts = explode('\\', $class);
-            $entityName = strtolower(array_pop($parts));
-            
-            $config = $this->plugin->getConfig();
-            $entityLimits = $config->get("entity-type-limits", []);
-            
-            if (isset($entityLimits[$entityName])) {
-                $limit = (int) $entityLimits[$entityName];
-                $currentCount = $this->getEntityTypeCount($class);
-                if ($currentCount >= $limit) {
-                    return false;
-                }
-            }
-
-            if ($class === \BeeAZ\AZVanillaMobs\entity\overworld\Phantom::class) {
-                $spawnY = $spawnY + mt_rand(20, 25);
-            }
-
-            $spawnPos = new Position($x + 0.5, $spawnY, $z + 0.5, $world);
-
-            $entity = new $class(Location::fromObject($spawnPos, $world, mt_rand(0, 360), 0));
-            $entity->spawnToAll();
-            return true;
+        $weightedCandidates = [];
+        $entityLimits = $this->plugin->getConfig()->get('entity-type-limits', []);
+        if (!is_array($entityLimits)) {
+            $entityLimits = [];
         }
-        return false;
+        $typeLimitRejected = false;
+        $time = $world->getTimeOfDay();
+        $isNight = $time >= World::TIME_NIGHT && $time < World::TIME_SUNRISE;
+        $sleepRules = $this->plugin->getConfig()->get('phantom-sleep', []);
+        $requiredNights = is_array($sleepRules) && is_numeric($sleepRules['nights-without-sleep'] ?? null)
+            ? max(1, min(14, (int)$sleepRules['nights-without-sleep']))
+            : 3;
+
+        foreach ($list as $class) {
+            $mobName = $this->shortMobName($class);
+            if ($class === \BeeAZ\AZVanillaMobs\entity\nether\Strider::class && $netherLavaSurfaceY === null) {
+                continue;
+            }
+            if (isset($entityLimits[$mobName]) && is_numeric($entityLimits[$mobName]) && ($this->entityTypeCounts[$class] ?? 0) >= max(0, (int)$entityLimits[$mobName])) {
+                $typeLimitRejected = true;
+                continue;
+            }
+            if ($profile->weight($mobName) <= 0 || !$profile->allowsBiome($mobName, $biomeName)) {
+                continue;
+            }
+
+            if ($isOverworld) {
+                if ($isWater) {
+                    if (in_array($class, $freshwaterMobs, true) && $isOceanBiome) {
+                        continue;
+                    }
+                    if (in_array($class, $oceanMobs, true) && !$isOceanBiome) {
+                        continue;
+                    }
+                    if (!in_array($class, $freshwaterMobs, true) && !in_array($class, $oceanMobs, true) && !in_array($class, $anyWaterMobs, true) && $mobName !== 'drowned') {
+                        continue;
+                    }
+                } elseif (in_array($class, $freshwaterMobs, true) || in_array($class, $oceanMobs, true) || in_array($class, $anyWaterMobs, true) || $mobName === 'drowned') {
+                    continue;
+                }
+
+                if (!$isWater && $mobName === 'phantom' && (!$isNight || $spawnY < 30 || !$this->plugin->getSleepTracker()->isEligible($player, $world, $requiredNights))) {
+                    continue;
+                }
+                if (!$isWater && $mobName === 'cavespider' && $world->getBlockLightAt($x, $spawnY, $z) > 7) {
+                    continue;
+                }
+                if (!$isWater && $mobName === 'bat' && (!$isNight || $world->getBlockLightAt($x, $spawnY, $z) > 3)) {
+                    continue;
+                }
+                if (!$isWater && $mobName === 'slime' && $spawnY >= 40 && !in_array($biomeName, ['swamp', 'mangrove_swamp'], true)) {
+                    continue;
+                }
+                if (!$isWater && in_array($mobName, ['pig', 'cow', 'sheep', 'chicken'], true) && (str_contains($biomeName, 'desert') || str_contains($biomeName, 'snow') || str_contains($biomeName, 'frozen'))) {
+                    continue;
+                }
+            }
+
+            $weightedCandidates[$class] = $profile->weight($mobName);
+        }
+
+        if ($weightedCandidates === []) {
+            return $this->reject($typeLimitRejected ? 'entity-type-cap' : 'no-mobs-match-world-rules');
+        }
+        $class = $this->chooseWeighted($weightedCandidates);
+        if ($class === null) {
+            return $this->reject('all-mob-weights-zero');
+        }
+        if ($class === \BeeAZ\AZVanillaMobs\entity\nether\Strider::class) {
+            if ($netherLavaSurfaceY === null) {
+                return $this->reject('strider-needs-lava-surface');
+            }
+            $spawnY = $netherLavaSurfaceY + 1;
+        }
+
+        $height = $class === \BeeAZ\AZVanillaMobs\entity\the_end\Enderman::class ? 3 : 2;
+        if ($class === \BeeAZ\AZVanillaMobs\entity\nether\Ghast::class) {
+            for ($dx = -1; $dx <= 2; ++$dx) {
+                for ($dy = 0; $dy <= 3; ++$dy) {
+                    for ($dz = -1; $dz <= 2; ++$dz) {
+                        $block = $world->getBlockAt($x + $dx, $spawnY + $dy, $z + $dz);
+                        if (!$block->isTransparent() || $block instanceof \pocketmine\block\Lava) {
+                            return $this->reject('ghast-space-blocked');
+                        }
+                    }
+                }
+            }
+        } else {
+            for ($dy = 0; $dy < $height; ++$dy) {
+                $block = $world->getBlockAt($x, $spawnY + $dy, $z);
+                if ($isWater && $dy === 0 && $block instanceof \pocketmine\block\Water) {
+                    continue;
+                }
+                if (!$block->isTransparent() || $block instanceof \pocketmine\block\Lava) {
+                    return $this->reject('spawn-space-blocked');
+                }
+            }
+        }
+
+        $minDistanceSquared = $minDistance * $minDistance;
+        foreach ($world->getPlayers() as $nearbyPlayer) {
+            if ($nearbyPlayer->getPosition()->distanceSquared(new \pocketmine\math\Vector3($x + 0.5, $spawnY, $z + 0.5)) < $minDistanceSquared) {
+                return $this->reject('too-close-to-player');
+            }
+        }
+
+        if ($class === \BeeAZ\AZVanillaMobs\entity\overworld\Phantom::class) {
+            $spawnY += mt_rand(20, 25);
+        }
+        $spawnPosition = new Position($x + 0.5, $spawnY, $z + 0.5, $world);
+        try {
+            $entity = new $class(Location::fromObject($spawnPosition, $world, mt_rand(0, 360), 0));
+        } catch (\Throwable $error) {
+            $this->plugin->getLogger()->debug('Natural spawn construction failed for ' . $class . ': ' . $error->getMessage());
+            return $this->reject('entity-construction-failed');
+        }
+
+        if (!$entity instanceof BaseMob) {
+            $entity->close();
+            return $this->reject('invalid-mob-class');
+        }
+        $entity->setNaturallySpawned(true);
+        $this->applyRareEncounter($entity, $profile, $world->getFolderName());
+        $entity->spawnToAll();
+
+        ++$this->totalMobs;
+        ++$this->worldMobCounts[$world->getFolderName()];
+        ++$this->entityTypeCounts[$class];
+        if ($entity->isRareEncounter()) {
+            ++$this->rareMobCounts[$world->getFolderName()];
+        }
+        return true;
+    }
+
+    private function isSafeNetherPosition(World $world, int $x, int $y, int $z): bool
+    {
+        $feet = $world->getBlockAt($x, $y, $z);
+        $head = $world->getBlockAt($x, $y + 1, $z);
+        $floor = $world->getBlockAt($x, $y - 1, $z);
+        return $feet->isTransparent() && !($feet instanceof \pocketmine\block\Lava) &&
+            $head->isTransparent() && !($head instanceof \pocketmine\block\Lava) &&
+            $floor->isSolid() && !($floor instanceof \pocketmine\block\Lava);
+    }
+
+    private function shortMobName(string $class): string
+    {
+        $parts = explode('\\', $class);
+        return strtolower((string)end($parts));
+    }
+
+    /** @param array<class-string, float> $weights */
+    private function chooseWeighted(array $weights): ?string
+    {
+        $total = array_sum($weights);
+        if ($total <= 0.0) {
+            return null;
+        }
+        $roll = mt_rand() / mt_getrandmax() * $total;
+        foreach ($weights as $class => $weight) {
+            $roll -= $weight;
+            if ($roll <= 0.0) {
+                return $class;
+            }
+        }
+        return (string)array_key_last($weights);
+    }
+
+    private function applyRareEncounter(BaseMob $entity, SpawnProfile $profile, string $worldName): void
+    {
+        $settings = $profile->get('rare-encounters');
+        if (!is_array($settings) || ($settings['enabled'] ?? false) !== true || !($entity instanceof Monster)) {
+            return;
+        }
+        $limit = is_numeric($settings['max-per-world'] ?? null) ? max(0, min(100, (int)$settings['max-per-world'])) : 2;
+        if (($this->rareMobCounts[$worldName] ?? 0) >= $limit) {
+            return;
+        }
+        $chance = is_numeric($settings['chance'] ?? null) ? max(0.0, min(1.0, (float)$settings['chance'])) : 0.01;
+        if ($chance <= 0.0 || mt_rand(1, 100000) > (int)round($chance * 100000)) {
+            return;
+        }
+        $healthMultiplier = is_numeric($settings['health-multiplier'] ?? null) ? max(1.0, min(5.0, (float)$settings['health-multiplier'])) : 1.5;
+        $damageMultiplier = is_numeric($settings['damage-multiplier'] ?? null) ? max(1.0, min(3.0, (float)$settings['damage-multiplier'])) : 1.15;
+        $entity->setRareEncounter(true, $damageMultiplier);
+        $entity->setPersistenceRequired(true);
+        $bonusDrop = is_array($settings['bonus-drop'] ?? null) ? $settings['bonus-drop'] : [];
+        $entity->setRareBonusDrop([
+            'item' => is_string($bonusDrop['item'] ?? null) ? $bonusDrop['item'] : 'diamond',
+            'amount' => is_numeric($bonusDrop['amount'] ?? null) ? (int)$bonusDrop['amount'] : 1,
+            'chance' => is_numeric($bonusDrop['chance'] ?? null) ? (float)$bonusDrop['chance'] : 0.1,
+        ]);
+        $entity->setMaxHealth(max(1, (int)ceil($entity->getMaxHealth() * $healthMultiplier)));
+        $entity->setHealth($entity->getMaxHealth());
+        if (($settings['visible-name'] ?? true) === true) {
+            $entity->setNameTag('§6Rare ' . $entity->getName());
+            $entity->setNameTagVisible(true);
+            $entity->setNameTagAlwaysVisible(true);
+        }
     }
 }

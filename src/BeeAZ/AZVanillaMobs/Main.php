@@ -11,27 +11,148 @@ use pocketmine\entity\EntityFactory;
 use pocketmine\entity\EntityDataHelper;
 
 class Main extends PluginBase {
+    private ?\BeeAZ\AZVanillaMobs\utils\SleepTracker $sleepTracker = null;
+    private ?\BeeAZ\AZVanillaMobs\spawner\SpawnerTask $spawnerTask = null;
+
     protected function onEnable(): void {
         $this->saveDefaultConfig();
-        $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\loot\LootManager(), $this);
+        $this->validateConfiguration();
+        $this->sleepTracker = new \BeeAZ\AZVanillaMobs\utils\SleepTracker($this);
+        $this->getServer()->getPluginManager()->registerEvents($this->sleepTracker, $this);
+        $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\loot\LootManager($this), $this);
         $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\listener\EventListener($this), $this);
         $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\listener\TradeListener($this), $this);
         $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\listener\LeashListener($this), $this);
         $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\listener\RidingListener($this), $this);
 
         $map = $this->getServer()->getCommandMap();
-        $cmd = $map->getCommand("summon");
-        if ($cmd !== null) $map->unregister($cmd);
         $map->register("AZVanillaMobs", new \BeeAZ\AZVanillaMobs\command\SummonCommand($this));
         $map->register("AZVanillaMobs", new \BeeAZ\AZVanillaMobs\command\KillCommand($this));
+        $map->register("AZVanillaMobs", new \BeeAZ\AZVanillaMobs\command\AZVanillaMobsCommand($this));
 
         $this->registerEntities();
-        $this->getScheduler()->scheduleRepeatingTask(new \BeeAZ\AZVanillaMobs\spawner\SpawnerTask($this), 20);
-        $this->getScheduler()->scheduleRepeatingTask(new class($this) extends \pocketmine\scheduler\Task {
-            public function onRun(): void {
-                \BeeAZ\AZVanillaMobs\listener\LeashListener::tickLeashes();
+        $this->spawnerTask = new \BeeAZ\AZVanillaMobs\spawner\SpawnerTask($this);
+        $this->getScheduler()->scheduleRepeatingTask($this->spawnerTask, 20);
+    }
+
+    public function getSleepTracker(): \BeeAZ\AZVanillaMobs\utils\SleepTracker {
+        if ($this->sleepTracker === null) {
+            throw new \LogicException('Sleep tracking is not initialized.');
+        }
+        return $this->sleepTracker;
+    }
+
+    /** @return array<string, mixed> */
+    public function getSpawnerStatus(): array {
+        return $this->spawnerTask?->getStatusSnapshot() ?? [];
+    }
+
+    public function validateConfiguration(): void {
+        $config = $this->getConfig()->getAll();
+        $worlds = $config['worlds'] ?? [];
+        $profiles = $config['spawn-profiles'] ?? [];
+        if (isset($config['world-profiles']) && !is_array($config['world-profiles'])) {
+            $this->getLogger()->warning('Config setting "world-profiles" must be a mapping of world names to profile names.');
+        }
+        if (!is_array($worlds)) {
+            $this->getLogger()->warning('Config setting "worlds" must be a mapping; natural spawning is disabled for all worlds.');
+            return;
+        }
+        foreach ($worlds as $worldName => $entry) {
+            if (!is_string($entry) && !is_array($entry)) {
+                $this->getLogger()->warning('Invalid world entry for "' . (string)$worldName . '"; expected a dimension or dimension/profile mapping.');
+                continue;
             }
-        }, 2);
+            if (\BeeAZ\AZVanillaMobs\spawner\SpawnProfile::dimension($entry) === null) {
+                $this->getLogger()->warning('Invalid dimension for world "' . (string)$worldName . '"; use overworld, nether, or the_end.');
+            }
+            $worldProfiles = $config['world-profiles'] ?? [];
+            $profileReference = is_array($entry)
+                ? ($entry['profile'] ?? $entry['spawn-profile'] ?? (is_array($worldProfiles) ? ($worldProfiles[$worldName] ?? 'default') : 'default'))
+                : (is_array($worldProfiles) ? ($worldProfiles[$worldName] ?? 'default') : 'default');
+            if (!is_string($profileReference)) {
+                $this->getLogger()->warning('World "' . (string)$worldName . '" has an invalid profile name; default settings will be used.');
+                $profileName = 'default';
+            } else {
+                $profileName = trim($profileReference) !== '' ? trim($profileReference) : 'default';
+            }
+            if ($profileName !== 'default' && (!is_array($profiles) || !isset($profiles[$profileName]) || !is_array($profiles[$profileName]))) {
+                $this->getLogger()->warning('World "' . (string)$worldName . '" refers to missing spawn profile "' . $profileName . '"; default settings will be used.');
+            }
+        }
+        foreach (['global-mob-cap', 'per-world-mob-cap'] as $setting) {
+            $value = $config[$setting] ?? null;
+            if (!is_numeric($value) || (int)$value < 1) {
+                $this->getLogger()->warning('Config setting "' . $setting . '" must be a positive integer.');
+            }
+        }
+        $typeLimits = $config['entity-type-limits'] ?? [];
+        if (is_array($typeLimits)) {
+            foreach ($typeLimits as $mob => $limit) {
+                if (!is_numeric($limit) || !is_finite((float)$limit) || (int)$limit < 0) {
+                    $this->getLogger()->warning('Config setting "entity-type-limits.' . (string)$mob . '" must be a non-negative number.');
+                }
+            }
+        } elseif (isset($config['entity-type-limits'])) {
+            $this->getLogger()->warning('Config setting "entity-type-limits" must be a mapping.');
+        }
+        if (is_array($profiles)) {
+            foreach ($profiles as $name => $profile) {
+                if (!is_array($profile)) {
+                    $this->getLogger()->warning('Spawn profile "' . (string)$name . '" must be a mapping.');
+                    continue;
+                }
+                $ranges = [
+                    'interval-seconds' => [1, 3600],
+                    'attempts-per-player' => [1, 20],
+                    'max-attempts-per-cycle' => [1, 1000],
+                    'min-player-distance' => [0, 256],
+                    'max-player-distance' => [1, 512],
+                    'per-world-mob-cap' => [1, 10000],
+                    'natural-hostile-despawn-distance' => [0, 512],
+                ];
+                foreach ($ranges as $setting => [$minimum, $maximum]) {
+                    if (isset($profile[$setting]) && (!is_numeric($profile[$setting]) || !is_finite((float)$profile[$setting]) || (float)$profile[$setting] < $minimum || (float)$profile[$setting] > $maximum)) {
+                        $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an out-of-range "' . $setting . '" value; allowed range is ' . $minimum . '..' . $maximum . '.');
+                    }
+                }
+                if (isset($profile['categories'])) {
+                    $categories = $profile['categories'];
+                    $hasInvalidCategory = !is_array($categories);
+                    if (is_array($categories)) {
+                        foreach ($categories as $category) {
+                            if (!is_string($category) || !in_array($category, ['hostile', 'passive', 'aquatic'], true)) {
+                                $hasInvalidCategory = true;
+                                break;
+                            }
+                        }
+                    }
+                    if ($hasInvalidCategory) {
+                        $this->getLogger()->warning('Spawn profile "' . (string)$name . '" contains an unknown category. Allowed: hostile, passive, aquatic.');
+                    }
+                }
+                if (is_array($profile['mob-weights'] ?? null)) {
+                    foreach ($profile['mob-weights'] as $mob => $weight) {
+                        if (!is_numeric($weight) || !is_finite((float)$weight) || (float)$weight < 0.0 || (float)$weight > 1000.0) {
+                            $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an invalid weight for "' . (string)$mob . '".');
+                        }
+                    }
+                }
+                $rare = $profile['rare-encounters'] ?? null;
+                if (is_array($rare)) {
+                    $rareRanges = ['chance' => [0.0, 1.0], 'max-per-world' => [0, 100], 'health-multiplier' => [1.0, 5.0], 'damage-multiplier' => [1.0, 3.0]];
+                    foreach ($rareRanges as $setting => [$minimum, $maximum]) {
+                        if (isset($rare[$setting]) && (!is_numeric($rare[$setting]) || !is_finite((float)$rare[$setting]) || (float)$rare[$setting] < $minimum || (float)$rare[$setting] > $maximum)) {
+                            $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an out-of-range rare-encounters.' . $setting . ' value; allowed range is ' . $minimum . '..' . $maximum . '.');
+                        }
+                    }
+                }
+            }
+        }
+        $phantomSleep = $config['phantom-sleep'] ?? [];
+        if (is_array($phantomSleep) && isset($phantomSleep['nights-without-sleep']) && (!is_numeric($phantomSleep['nights-without-sleep']) || (int)$phantomSleep['nights-without-sleep'] < 1 || (int)$phantomSleep['nights-without-sleep'] > 14)) {
+            $this->getLogger()->warning('Config setting "phantom-sleep.nights-without-sleep" must be an integer from 1 to 14.');
+        }
     }
 
     public array $spawnerLists = [
