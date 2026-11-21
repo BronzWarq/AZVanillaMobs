@@ -1,5 +1,5 @@
 name: AZVanillaMobs
-version: 1.0.3
+version: 1.1.0
 main: BeeAZ\AZVanillaMobs\Main
 api: 5.0.0
 authors: [BeeAZ, BronzWarq]
@@ -11,6 +11,9 @@ permissions:
   azvanillamobs.command.admin:
     description: "Allows reloading and inspecting AZVanillaMobs"
     default: op
+  azvanillamobs.command.bestiary:
+    description: "Allows viewing a player's AZVanillaMobs bestiary and hunt goals"
+    default: true
   azvanillamobs.command.kill:
     description: "Allows killing of AZVanillaMobs"
     default: op

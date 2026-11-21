@@ -13,11 +13,13 @@ use pocketmine\entity\EntityDataHelper;
 class Main extends PluginBase {
     private ?\BeeAZ\AZVanillaMobs\utils\SleepTracker $sleepTracker = null;
     private ?\BeeAZ\AZVanillaMobs\spawner\SpawnerTask $spawnerTask = null;
+    private ?\BeeAZ\AZVanillaMobs\utils\SurvivalDataStore $survivalDataStore = null;
 
     protected function onEnable(): void {
         $this->saveDefaultConfig();
         $this->validateConfiguration();
         $this->sleepTracker = new \BeeAZ\AZVanillaMobs\utils\SleepTracker($this);
+        $this->survivalDataStore = new \BeeAZ\AZVanillaMobs\utils\SurvivalDataStore($this);
         $this->getServer()->getPluginManager()->registerEvents($this->sleepTracker, $this);
         $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\loot\LootManager($this), $this);
         $this->getServer()->getPluginManager()->registerEvents(new \BeeAZ\AZVanillaMobs\listener\EventListener($this), $this);
@@ -29,10 +31,16 @@ class Main extends PluginBase {
         $map->register("AZVanillaMobs", new \BeeAZ\AZVanillaMobs\command\SummonCommand($this));
         $map->register("AZVanillaMobs", new \BeeAZ\AZVanillaMobs\command\KillCommand($this));
         $map->register("AZVanillaMobs", new \BeeAZ\AZVanillaMobs\command\AZVanillaMobsCommand($this));
+        $map->register("AZVanillaMobs", new \BeeAZ\AZVanillaMobs\command\BestiaryCommand($this));
 
         $this->registerEntities();
         $this->spawnerTask = new \BeeAZ\AZVanillaMobs\spawner\SpawnerTask($this);
         $this->getScheduler()->scheduleRepeatingTask($this->spawnerTask, 20);
+    }
+
+    protected function onDisable(): void {
+        $this->spawnerTask?->flushMetrics();
+        $this->survivalDataStore?->close();
     }
 
     public function getSleepTracker(): \BeeAZ\AZVanillaMobs\utils\SleepTracker {
@@ -45,6 +53,10 @@ class Main extends PluginBase {
     /** @return array<string, mixed> */
     public function getSpawnerStatus(): array {
         return $this->spawnerTask?->getStatusSnapshot() ?? [];
+    }
+
+    public function getSurvivalDataStore(): ?\BeeAZ\AZVanillaMobs\utils\SurvivalDataStore {
+        return $this->survivalDataStore;
     }
 
     public function validateConfiguration(): void {
@@ -138,6 +150,48 @@ class Main extends PluginBase {
                         }
                     }
                 }
+                if (is_array($profile['mob-conditions'] ?? null)) {
+                    foreach ($profile['mob-conditions'] as $mob => $condition) {
+                        if (!is_array($condition)) {
+                            $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has invalid mob-conditions.' . (string)$mob . '; expected a mapping.');
+                            continue;
+                        }
+                        foreach (['min-light' => [0, 15], 'max-light' => [0, 15], 'min-y' => [-64, 320], 'max-y' => [-64, 320]] as $setting => [$minimum, $maximum]) {
+                            if (isset($condition[$setting]) && (!is_numeric($condition[$setting]) || !is_finite((float)$condition[$setting]) || (float)$condition[$setting] < $minimum || (float)$condition[$setting] > $maximum)) {
+                                $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an invalid mob-conditions.' . (string)$mob . '.' . $setting . ' value; allowed range is ' . $minimum . '..' . $maximum . '.');
+                            }
+                        }
+                        if (isset($condition['min-light'], $condition['max-light']) && is_numeric($condition['min-light']) && is_numeric($condition['max-light']) && (int)$condition['min-light'] > (int)$condition['max-light']) {
+                            $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has min-light greater than max-light for mob "' . (string)$mob . '".');
+                        }
+                        if (isset($condition['min-y'], $condition['max-y']) && is_numeric($condition['min-y']) && is_numeric($condition['max-y']) && (int)$condition['min-y'] > (int)$condition['max-y']) {
+                            $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has min-y greater than max-y for mob "' . (string)$mob . '".');
+                        }
+                        $times = $condition['time'] ?? [];
+                        foreach (is_array($times) ? $times : [$times] as $time) {
+                            if (!is_string($time) || !in_array(strtolower($time), ['day', 'dawn', 'dusk', 'night'], true)) {
+                                $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an unknown time condition for mob "' . (string)$mob . '".');
+                                break;
+                            }
+                        }
+                        $weatherValues = $condition['weather'] ?? [];
+                        foreach (is_array($weatherValues) ? $weatherValues : [$weatherValues] as $weather) {
+                            if (!is_string($weather) || !in_array(strtolower($weather), ['clear', 'rain', 'thunder'], true)) {
+                                $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an unknown weather condition for mob "' . (string)$mob . '".');
+                                break;
+                            }
+                        }
+                        $groundBlocks = $condition['ground-blocks'] ?? [];
+                        foreach (is_array($groundBlocks) ? $groundBlocks : [$groundBlocks] as $block) {
+                            if (!is_string($block) || trim($block) === '') {
+                                $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an invalid ground-blocks entry for mob "' . (string)$mob . '".');
+                                break;
+                            }
+                        }
+                    }
+                } elseif (isset($profile['mob-conditions'])) {
+                    $this->getLogger()->warning('Spawn profile "' . (string)$name . '" setting "mob-conditions" must be a mapping.');
+                }
                 $rare = $profile['rare-encounters'] ?? null;
                 if (is_array($rare)) {
                     $rareRanges = ['chance' => [0.0, 1.0], 'max-per-world' => [0, 100], 'health-multiplier' => [1.0, 5.0], 'damage-multiplier' => [1.0, 3.0]];
@@ -146,6 +200,36 @@ class Main extends PluginBase {
                             $this->getLogger()->warning('Spawn profile "' . (string)$name . '" has an out-of-range rare-encounters.' . $setting . ' value; allowed range is ' . $minimum . '..' . $maximum . '.');
                         }
                     }
+                    if (isset($rare['archetypes']) && !is_array($rare['archetypes'])) {
+                        $this->getLogger()->warning('Spawn profile "' . (string)$name . '" setting "rare-encounters.archetypes" must be a mapping.');
+                    } elseif (is_array($rare['archetypes'] ?? null)) {
+                        foreach ($rare['archetypes'] as $archetype => $definition) {
+                            if (!is_array($definition)) {
+                                $this->getLogger()->warning('Rare archetype "' . (string)$archetype . '" in profile "' . (string)$name . '" must be a mapping.');
+                                continue;
+                            }
+                            if (isset($definition['weight']) && (!is_numeric($definition['weight']) || !is_finite((float)$definition['weight']) || (float)$definition['weight'] < 0.0 || (float)$definition['weight'] > 1000.0)) {
+                                $this->getLogger()->warning('Rare archetype "' . (string)$archetype . '" in profile "' . (string)$name . '" has an invalid weight.');
+                            }
+                            foreach (['health-multiplier' => [1.0, 5.0], 'damage-multiplier' => [1.0, 3.0]] as $setting => [$minimum, $maximum]) {
+                                if (isset($definition[$setting]) && (!is_numeric($definition[$setting]) || !is_finite((float)$definition[$setting]) || (float)$definition[$setting] < $minimum || (float)$definition[$setting] > $maximum)) {
+                                    $this->getLogger()->warning('Rare archetype "' . (string)$archetype . '" in profile "' . (string)$name . '" has an out-of-range "' . $setting . '" value.');
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        $bestiary = $config['bestiary'] ?? [];
+        if (!is_array($bestiary)) {
+            $this->getLogger()->warning('Config setting "bestiary" must be a mapping.');
+        } elseif (isset($bestiary['goals']) && !is_array($bestiary['goals'])) {
+            $this->getLogger()->warning('Config setting "bestiary.goals" must be a mapping.');
+        } elseif (is_array($bestiary['goals'] ?? null)) {
+            foreach ($bestiary['goals'] as $goal => $definition) {
+                if (!is_array($definition) || !is_numeric($definition['target'] ?? null) || (int)$definition['target'] < 1) {
+                    $this->getLogger()->warning('Bestiary goal "' . (string)$goal . '" needs a mapping and a positive target.');
                 }
             }
         }

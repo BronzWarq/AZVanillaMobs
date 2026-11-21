@@ -31,6 +31,7 @@ use pocketmine\scheduler\Task;
 class EventListener implements Listener
 {
     public static array $rainingWorlds = [];
+    public static array $thunderingWorlds = [];
     private Main $plugin;
 
     public function __construct(Main $plugin)
@@ -41,6 +42,11 @@ class EventListener implements Listener
     public static function isWorldRaining(World $world): bool
     {
         return isset(self::$rainingWorlds[$world->getFolderName()]);
+    }
+
+    public static function isWorldThundering(World $world): bool
+    {
+        return isset(self::$thunderingWorlds[$world->getFolderName()]);
     }
 
     public function onEntitySpawn(EntitySpawnEvent $event): void
@@ -60,18 +66,34 @@ class EventListener implements Listener
     {
         foreach ($event->getPackets() as $packet) {
             if ($packet instanceof LevelEventPacket) {
-                if ($packet->eventId === LevelEvent::START_RAIN || $packet->eventId === LevelEvent::START_THUNDER) {
+                if ($packet->eventId === LevelEvent::START_RAIN) {
                     foreach ($event->getTargets() as $target) {
                         $player = $target->getPlayer();
                         if ($player !== null) {
                             self::$rainingWorlds[$player->getWorld()->getFolderName()] = true;
                         }
                     }
-                } elseif ($packet->eventId === LevelEvent::STOP_RAIN || $packet->eventId === LevelEvent::STOP_THUNDER) {
+                } elseif ($packet->eventId === LevelEvent::STOP_RAIN) {
                     foreach ($event->getTargets() as $target) {
                         $player = $target->getPlayer();
                         if ($player !== null) {
                             unset(self::$rainingWorlds[$player->getWorld()->getFolderName()]);
+                        }
+                    }
+                } elseif ($packet->eventId === LevelEvent::START_THUNDER) {
+                    foreach ($event->getTargets() as $target) {
+                        $player = $target->getPlayer();
+                        if ($player !== null) {
+                            $worldName = $player->getWorld()->getFolderName();
+                            self::$rainingWorlds[$worldName] = true;
+                            self::$thunderingWorlds[$worldName] = true;
+                        }
+                    }
+                } elseif ($packet->eventId === LevelEvent::STOP_THUNDER) {
+                    foreach ($event->getTargets() as $target) {
+                        $player = $target->getPlayer();
+                        if ($player !== null) {
+                            unset(self::$thunderingWorlds[$player->getWorld()->getFolderName()]);
                         }
                     }
                 }

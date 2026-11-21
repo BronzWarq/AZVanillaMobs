@@ -53,7 +53,7 @@ final class Smoke extends PluginBase {
             if ($plugin === null || !$plugin->isEnabled()) throw new \RuntimeException('AZVanillaMobs did not enable');
             if (!$plugin instanceof AZVanillaMobsMain) throw new \RuntimeException('AZVanillaMobs loaded with an unexpected main class');
             $commandMap = $server->getCommandMap();
-            foreach (['azsummon', 'azm', 'azkill'] as $command) {
+            foreach (['azsummon', 'azm', 'azkill', 'azbestiary', 'azhunt'] as $command) {
                 if ($commandMap->getCommand($command) === null) throw new \RuntimeException("Missing command: $command");
             }
             if ($commandMap->getCommand('summon') instanceof \BeeAZ\AZVanillaMobs\command\SummonCommand) {
@@ -73,7 +73,28 @@ final class Smoke extends PluginBase {
             if ($malformedProfile->weight('zombie') !== 0.0 || $malformedProfile->weight('creeper') <= 0.0) {
                 throw new \RuntimeException('Malformed disabled-mobs entries were not safely ignored');
             }
-            $checks[] = 'spawn profiles, biome rules, and sleep service registration';
+            $conditionsConfig = $profileConfig;
+            $conditionsConfig['spawn-profiles']['smoke-conditions'] = [
+                'mob-conditions' => [
+                    'zombie' => [
+                        'time' => ['night'],
+                        'min-light' => 2,
+                        'max-light' => 7,
+                        'min-y' => 50,
+                        'max-y' => 100,
+                        'weather' => ['clear', 'rain'],
+                        'ground-blocks' => ['stone', 'deepslate*'],
+                    ],
+                ],
+            ];
+            $conditionsProfile = SpawnProfile::resolve($conditionsConfig, 'world', ['dimension' => 'overworld', 'profile' => 'smoke-conditions']);
+            if (!$conditionsProfile->allowsSpawnConditions('zombie', ['time' => 'night', 'light' => 4, 'y' => 70, 'weather' => 'clear', 'ground' => 'Stone']) ||
+                $conditionsProfile->allowsSpawnConditions('zombie', ['time' => 'day', 'light' => 4, 'y' => 70, 'weather' => 'clear', 'ground' => 'stone']) ||
+                $conditionsProfile->allowsSpawnConditions('zombie', ['time' => 'night', 'light' => 12, 'y' => 70, 'weather' => 'clear', 'ground' => 'stone']) ||
+                $conditionsProfile->allowsSpawnConditions('zombie', ['time' => 'night', 'light' => 4, 'y' => 70, 'weather' => 'clear', 'ground' => 'sand'])) {
+                throw new \RuntimeException('Per-mob time, light, height, weather, or ground conditions are incorrect');
+            }
+            $checks[] = 'spawn profiles, biome rules, spawn conditions, and sleep service registration';
             $world = $server->getWorldManager()->getDefaultWorld();
             if ($world === null) throw new \RuntimeException('No default world');
             $spawn = $world->getSpawnLocation();
@@ -95,18 +116,40 @@ final class Smoke extends PluginBase {
             $rareMob->setNaturallySpawned(true);
             $rareMob->setPersistenceRequired(true);
             $rareMob->setRareEncounter(true, 2.0);
+            $rareMob->setRareArchetype('brute');
             $rareMob->setRareBonusDrop(['item' => 'emerald', 'amount' => 2, 'chance' => 0.5]);
             $rareMob->setMaxHealth(40);
             $rareMob->setHealth(35);
             $restoredRareMob = new Zombie($loc(), $rareMob->saveNBT());
             if (!$restoredRareMob->isNaturallySpawned() || !$restoredRareMob->isPersistenceRequired() || !$restoredRareMob->isRareEncounter() ||
                 $restoredRareMob->getMaxHealth() !== 40 || $restoredRareMob->getHealth() !== 35.0 || $restoredRareMob->getAttackDamage() !== 18.0 ||
+                $restoredRareMob->getRareArchetype() !== 'brute' ||
                 $restoredRareMob->getRareBonusDrop() !== ['item' => 'emerald', 'amount' => 2, 'chance' => 0.5]) {
                 throw new \RuntimeException('Natural, persistent, or rare mob NBT state did not round-trip');
             }
             $restoredRareMob->close();
             $rareMob->close();
             $checks[] = 'rare encounter modifiers and entity NBT persistence';
+
+            $dataStore = $plugin->getSurvivalDataStore();
+            if ($dataStore === null || !$dataStore->isAvailable()) throw new \RuntimeException('Persistent survival SQLite store is unavailable');
+            $smokeUuid = '550e8400-e29b-41d4-a716-' . bin2hex(random_bytes(6));
+            $dataStore->recordMobKill($smokeUuid, 'SmokePlayer', 'minecraft:zombie', 'minecraft:plains', 'overworld', false);
+            $dataStore->recordMobKill($smokeUuid, 'SmokePlayer', 'minecraft:zombie', 'minecraft:plains', 'overworld', true);
+            $allKills = $dataStore->getKillCount($smokeUuid, 'zombie');
+            $rareKills = $dataStore->getKillCount($smokeUuid, '*', true);
+            $biomeKills = $dataStore->getKillCount($smokeUuid, 'zombie', false, 'plains');
+            $firstClaim = $dataStore->claimGoal($smokeUuid, 'smoke_goal');
+            $secondClaim = $dataStore->claimGoal($smokeUuid, 'smoke_goal');
+            if ($allKills !== 2 || $rareKills !== 1 || $biomeKills !== 2 || !$firstClaim || $secondClaim) {
+                throw new \RuntimeException('UUID bestiary and goal assertion failed: ' . json_encode([$allKills, $rareKills, $biomeKills, $firstClaim, $secondClaim]));
+            }
+            $dataStore->recordSpawnCycle('smoke-world', 4, 1, 0, ['smoke-rejection' => 3], 1.5);
+            $telemetry = $dataStore->getSpawnTelemetrySummary('smoke-world');
+            if ($telemetry['attempts'] < 4 || $telemetry['spawned'] < 1 || ($telemetry['rejections']['smoke-rejection'] ?? 0) < 3) {
+                throw new \RuntimeException('Persistent per-world spawn telemetry aggregation failed');
+            }
+            $checks[] = 'SQLite spawn telemetry, UUID bestiary, biome goals, and one-time badge claims';
 
             $creeper = new Creeper($loc());
             $creeper->onUpdate($server->getTick() + 1);

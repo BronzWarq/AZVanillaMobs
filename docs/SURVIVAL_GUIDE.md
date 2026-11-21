@@ -31,6 +31,12 @@ spawn-profiles:
     mob-biomes:
       husk: [desert, "badlands*"]
       camel: [desert]
+    mob-conditions:
+      skeleton:
+        time: [dusk, night]
+        max-light: 7
+        min-y: 50
+        ground-blocks: [stone, deepslate]
     rare-encounters:
       enabled: false
       chance: 0.01
@@ -54,6 +60,12 @@ The global cap still limits all configured worlds together. Each world profile h
 
 Spawn attempts are limited per cycle and use already generated, loaded chunks, so this task does not load distant chunks while searching for spawn positions. Natural hostile mobs farther than `natural-hostile-despawn-distance` from every player can despawn. Named, rare, interacted, leashed, and mounted mobs are kept. The per-cycle duration and rejection reasons are visible in `/azm status`.
 
+### Spawn conditions
+
+`mob-conditions` adds optional filters per mob without changing its category, weight, or biome rules. Available fields are `time` (`day`, `dawn`, `dusk`, `night`), `min-light`/`max-light` (0–15), `min-y`/`max-y`, `weather` (`clear`, `rain`, `thunder`), and `ground-blocks` (block names or `*`/`?` patterns). The ground check uses the block directly below the candidate spawn position. Leave a field out to allow any value.
+
+Use `/azm status [world]` to inspect current population and persisted telemetry for the last 24 hours: attempts, successful spawns, rejected attempts, average/max cycle time, and top rejection reasons. Telemetry is stored by world and minute in `survival.sqlite3`; old metric rows are pruned after 30 days.
+
 ## Phantoms
 
 Configure the required number of full in-game days without sleep:
@@ -71,14 +83,24 @@ Rare encounters are disabled by default. Enable them per profile under `rare-enc
 
 Start with a low chance and a small bonus. Use recognized PocketMine item names, for example `diamond`, `emerald`, or `gold_ingot`. An unknown item is skipped and reported in the server log.
 
+Profiles may define weighted `archetypes` under `rare-encounters`. Each archetype can set `display-name`, `weight`, `health-multiplier`, `damage-multiplier`, and its own `bonus-drop`; `bonus-drop: false` disables a drop for that archetype. The selected archetype ID and its combat/drop values are saved with the entity, so tuning the profile does not rewrite an already spawned rare mob.
+
+## UUID bestiary and hunt badges
+
+Player kill history is stored under the player's UUID, not the current name. It records species, biome, dimension, total kills, and rare kills in the same `survival.sqlite3` database. By default only naturally spawned AZVanillaMobs count; change `bestiary.only-natural-kills` if the server wants spawn-egg or command-spawn kills included.
+
+Use `/azbestiary` (alias `/azhunt`) to view recorded species and habitats, `/azbestiary goals` to view milestones, and `/azbestiary claim <goal>` to claim an earned badge once. Goals are configured by ID under `bestiary.goals` and may require a species, any species (`mob: "*"`), rare kills (`rare: true`), or a biome. Badges are persistent achievements displayed by the plugin; they do not grant items or economy funds.
+
 ## Commands and diagnostics
 
 - `/azsummon <mob> [amount]` (alias `/azmob`) creates plugin mobs under a dedicated command name, avoiding collisions with other plugins that provide `/summon`.
 - `/azm status` shows current mob counts, spawn attempts, successes, rejections, recent cycle time, and the most common rejection reasons.
+- `/azm status [world]` also shows persisted spawn telemetry from the last 24 hours, optionally for one world.
 - `/azm reload` reloads configuration and reports invalid values in the server log.
+- `/azbestiary` (`/azhunt`) shows a player's UUID-based bestiary and hunt milestones.
 - `/azkill <@e|mob>` removes plugin entities.
 
-Administration commands require the `azvanillamobs.command.admin` permission. Spawn, dimension, profile, cap, weight, category, phantom, and rare chance settings are checked at enable and reload.
+Administration commands require the `azvanillamobs.command.admin` permission. The bestiary command uses `azvanillamobs.command.bestiary` (enabled for all players by default). Spawn, dimension, profile, cap, weight, category, spawn condition, phantom, rare chance, and hunt-goal settings are checked at enable and reload.
 
 ## Optional RPGMoney Bedrock rewards
 

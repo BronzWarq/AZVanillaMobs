@@ -11,6 +11,7 @@ use pocketmine\item\VanillaItems;
 use pocketmine\item\StringToItemParser;
 use BeeAZ\AZVanillaMobs\entity\BaseMob;
 use BeeAZ\AZVanillaMobs\Main;
+use BeeAZ\AZVanillaMobs\spawner\SpawnProfile;
 use pocketmine\event\entity\EntityDamageByEntityEvent;
 use pocketmine\entity\projectile\Projectile;
 use pocketmine\player\Player;
@@ -25,6 +26,28 @@ class LootManager implements Listener {
     public function onEntityDeath(EntityDeathEvent $event): void {
         $entity = $event->getEntity();
         if (!$entity instanceof BaseMob) return;
+
+        $killer = $this->getPlayerKiller($entity);
+        $bestiaryConfig = $this->plugin->getConfig()->get('bestiary', []);
+        if ($killer !== null && is_array($bestiaryConfig) && ($bestiaryConfig['enabled'] ?? true) === true) {
+            $onlyNatural = ($bestiaryConfig['only-natural-kills'] ?? true) !== false;
+            if (!$onlyNatural || $entity->isNaturallySpawned()) {
+                $world = $entity->getWorld();
+                $position = $entity->getPosition();
+                $biome = $world->getBiome((int)floor($position->x), (int)floor($position->y), (int)floor($position->z))->getName();
+                $worlds = $this->plugin->getConfig()->get('worlds', []);
+                $worldEntry = is_array($worlds) ? ($worlds[$world->getFolderName()] ?? null) : null;
+                $dimension = is_string($worldEntry) || is_array($worldEntry) ? (SpawnProfile::dimension($worldEntry) ?? 'unknown') : 'unknown';
+                $this->plugin->getSurvivalDataStore()?->recordMobKill(
+                    $killer->getUniqueId()->toString(),
+                    $killer->getName(),
+                    $entity->getNetworkTypeId(),
+                    $biome,
+                    $dimension,
+                    $entity->isRareEncounter()
+                );
+            }
+        }
 
         $type = $entity->getNetworkTypeId();
         $drops = [];
@@ -244,7 +267,7 @@ class LootManager implements Listener {
 
         $rareBonusDrops = [];
         $bonus = $entity->isRareEncounter() ? $entity->getRareBonusDrop() : null;
-        if ($bonus !== null && $this->wasKilledByPlayer($entity)) {
+        if ($bonus !== null && $killer !== null) {
             $chance = max(0.0, min(1.0, $bonus['chance']));
             if ($chance >= 1.0 || ($chance > 0.0 && mt_rand(1, 100000) <= (int)round($chance * 100000))) {
                 $item = StringToItemParser::getInstance()->parse($bonus['item']);
@@ -283,16 +306,16 @@ class LootManager implements Listener {
         return $item;
     }
 
-    private function wasKilledByPlayer(BaseMob $entity): bool
+    private function getPlayerKiller(BaseMob $entity): ?Player
     {
         $damage = $entity->getLastDamageCause();
         if (!$damage instanceof EntityDamageByEntityEvent) {
-            return false;
+            return null;
         }
         $damager = $damage->getDamager();
         if ($damager instanceof Projectile) {
             $damager = $damager->getOwningEntity();
         }
-        return $damager instanceof Player;
+        return $damager instanceof Player ? $damager : null;
     }
 }

@@ -20,6 +20,7 @@ abstract class BaseMob extends Living
     private bool $persistenceRequired = false;
     private bool $rareEncounter = false;
     private float $rareDamageMultiplier = 1.0;
+    private string $rareArchetype = 'legacy';
     /** @var array{item: string, amount: int, chance: float}|null */
     private ?array $rareBonusDrop = null;
 
@@ -41,6 +42,8 @@ abstract class BaseMob extends Living
         $this->persistenceRequired = $nbt->getByte("AZPersistenceRequired", 0) !== 0;
         $this->rareEncounter = $nbt->getByte("AZRareEncounter", 0) !== 0;
         $this->rareDamageMultiplier = max(1.0, min(3.0, $nbt->getFloat("AZRareDamageMultiplier", 1.0)));
+        $archetype = strtolower($nbt->getString("AZRareArchetype", "legacy"));
+        $this->rareArchetype = preg_match('/^[a-z0-9_-]{1,32}$/', $archetype) === 1 ? $archetype : 'legacy';
         $rareItem = $nbt->getString("AZRareBonusItem", "");
         if ($rareItem !== "") {
             $this->rareBonusDrop = [
@@ -80,6 +83,7 @@ abstract class BaseMob extends Living
         $nbt->setByte("AZPersistenceRequired", $this->persistenceRequired ? 1 : 0);
         $nbt->setByte("AZRareEncounter", $this->rareEncounter ? 1 : 0);
         $nbt->setFloat("AZRareDamageMultiplier", $this->rareDamageMultiplier);
+        $nbt->setString("AZRareArchetype", $this->rareArchetype);
         if ($this->rareBonusDrop !== null) {
             $nbt->setString("AZRareBonusItem", $this->rareBonusDrop['item']);
             $nbt->setInt("AZRareBonusAmount", $this->rareBonusDrop['amount']);
@@ -275,6 +279,17 @@ abstract class BaseMob extends Living
     public function isRareEncounter(): bool
     {
         return $this->rareEncounter;
+    }
+
+    public function setRareArchetype(string $archetype): void
+    {
+        $archetype = strtolower(trim($archetype));
+        $this->rareArchetype = preg_match('/^[a-z0-9_-]{1,32}$/', $archetype) === 1 ? $archetype : 'legacy';
+    }
+
+    public function getRareArchetype(): string
+    {
+        return $this->rareArchetype;
     }
 
     public function getRareDamageMultiplier(): float

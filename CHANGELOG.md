@@ -1,3 +1,21 @@
+# AZVanillaMobs 1.1.0
+
+## Русский
+
+- Добавлена сохраняемая SQLite-телеметрия естественного спавна: сводка по миру за последние 24 часа и причины отказа; история телеметрии хранится до 30 дней.
+- Добавлены редкие архетипы с весами выбора, индивидуальным именем, множителями здоровья/урона и бонусной добычей; выбранный архетип сохраняется в NBT моба.
+- Добавлены настройки условий спавна для вида времени, уровня света, высоты, погоды и блока под точкой появления.
+- Добавлен UUID-бестиарий с историей убийств по мобу, редкости, биому и измерению, а также одноразовые охотничьи значки с фильтрами по виду, редким убийствам и биому.
+- Добавлены команды `/azbestiary` (`/azhunt`) и расширенная диагностика `/azm status [world]`.
+
+## English
+
+- Add persistent SQLite natural-spawn telemetry with per-world 24-hour summaries and rejection reasons; retain metrics for up to 30 days.
+- Add weighted rare encounter archetypes with individual names, health/damage modifiers, and bonus drops; persist the selected archetype in mob NBT.
+- Add per-mob spawn filters for time of day, light level, height, weather, and supporting ground block.
+- Add a UUID-based bestiary tracking species, rare kills, biome, and dimension, plus one-time hunt badges filtered by species, rare kills, or biome.
+- Add `/azbestiary` (`/azhunt`) and extended `/azm status [world]` diagnostics.
+
 # AZVanillaMobs 1.0.3
 
 ## Русский

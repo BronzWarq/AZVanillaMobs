@@ -1,8 +1,8 @@
 # 🐾 AZVanillaMobs
 
-Fork version **1.0.3** for PocketMine-MP 5.44.x, tested on 5.44.3 with PHP 8.4.16. This release adds configurable survival spawning, persistent phantom sleep history, rare encounters, and performance improvements; see the [release notes](https://github.com/BronzWarq/AZVanillaMobs/blob/master/docs/releases/v1.0.3.md) for details. A fresh installation includes default world profiles. Existing `config.yml` files are not overwritten: if your world names differ, add them to `worlds` manually.
+Release **1.1.0** targets PocketMine-MP 5.44.x and PHP 8.4. It adds persistent spawn telemetry, UUID bestiary and hunt badges, configurable spawn conditions, and weighted rare encounter archetypes; see the [release notes](docs/releases/v1.1.0.md). A fresh installation includes default world profiles. Existing `config.yml` files are not overwritten: if your world names differ, add them to `worlds` manually.
 
-The plugin uses the standard `EntityDeathEvent` and is compatible with [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1) for money rewards. Neither RPGMoney nor EconomyAPI is required for the mobs themselves. Installing another plugin that registers the same mob types may cause conflicts. The release was smoke-tested on PocketMine-MP 5.44.3; live natural spawn rates, multi-day sleep behavior, trading with real clients, and multiplayer performance need server-specific observation.
+The plugin uses the standard `EntityDeathEvent` and is compatible with [RPGMoney Bedrock 1.1.1](https://github.com/BronzWarq/RPGMoney/releases/tag/bedrock-v1.1.1) for money rewards. Neither RPGMoney nor EconomyAPI is required for the mobs themselves. Installing another plugin that registers the same mob types may cause conflicts. Version 1.1.0 was syntax-checked and smoke-tested on PocketMine-MP 5.44.3; live natural spawn rates, multi-day sleep behavior, trading with real clients, and multiplayer performance need server-specific observation.
 
 Download the PHAR from the [fork's releases](https://github.com/BronzWarq/AZVanillaMobs/releases). To build it yourself, use PHP 8.4 with Phar:
 
@@ -54,6 +54,10 @@ The PHAR and its SHA-256 checksum will appear in `dist/`. The original author is
 - Per-world spawn profiles with mob weights, biome restrictions, category controls, and spawn caps
 - Bounded spawn attempts that use only already-loaded chunks
 - Optional rare hostile encounters with persistent health/damage settings and bonus drops
+- Weighted rare archetypes with separate names, stats, and bonus drops
+- Per-mob spawn conditions for time, light level, height, weather, and supporting terrain
+- Persistent spawn telemetry with 24-hour world-level attempt, success, rejection, and cycle-time summaries
+- UUID-based bestiary, habitat history, and one-time configurable hunt badges
 - Distant natural hostile mobs despawn without removing named, interacted, leashed, mounted, or rare mobs
 
 ## 🌊 Aquatic Features
@@ -127,8 +131,9 @@ AZVanillaMobs is built specifically for PocketMine-MP performance:
 |---|---|
 | `/azsummon <mob> [amount]` (`/azmob`) | Spawn 1–20 AZVanillaMobs using a dedicated command name |
 | `/azkill <@e|mob>` | Remove plugin entities |
-| `/azm status` | Inspect mob counts, spawn cycle timing, and common spawn rejection reasons |
+| `/azm status [world]` | Inspect mob counts and persisted 24-hour spawn metrics, optionally for one world |
 | `/azm reload` | Reload configuration and report invalid settings to the server log |
+| `/azbestiary` (`/azhunt`) | View your UUID-based kill history, habitats, hunt goals, and claim earned badges |
 
 ---
 
@@ -162,6 +167,12 @@ spawn-profiles:
       phantom: 2
     mob-biomes:
       husk: [desert, "badlands*"]
+    mob-conditions:
+      skeleton:
+        time: [dusk, night]
+        max-light: 7
+        min-y: 50
+        ground-blocks: [stone, deepslate]
     rare-encounters:
       enabled: false
       chance: 0.01
@@ -169,7 +180,23 @@ spawn-profiles:
       health-multiplier: 1.5
       damage-multiplier: 1.15
       bonus-drop: {item: diamond, amount: 1, chance: 0.1}
+      archetypes:
+        brute:
+          display-name: Ancient
+          weight: 3
+          health-multiplier: 2.0
+          damage-multiplier: 1.3
+          bonus-drop: {item: gold_ingot, amount: 2, chance: 0.5}
+
+bestiary:
+  enabled: true
+  only-natural-kills: true
+  goals:
+    zombie_hunter: {title: Zombie Hunter, mob: zombie, target: 25}
+    desert_hunter: {title: Desert Hunter, mob: husk, biome: desert, target: 10}
 ```
+
+`time` supports `day`, `dawn`, `dusk`, and `night`; light values range from 0 to 15. `ground-blocks` accepts block names and `*`/`?` patterns. Hunt goals can count a mob ID, all species (`mob: "*"`), rare kills (`rare: true`), and optionally a biome. Claimed badges are stored by player UUID and cannot be claimed twice.
 
 Legacy world values such as `"world": "overworld"` remain supported. See [the survival-server guide](docs/SURVIVAL_GUIDE.md) for profile tuning and optional RPGMoney setup.
 

@@ -19,7 +19,7 @@ final class AZVanillaMobsCommand extends Command implements PluginOwned
     public function __construct(private Main $plugin)
     {
         $this->__traitConstruct($plugin);
-        parent::__construct('azm', 'AZVanillaMobs administration', '/azm <status|reload>', ['azvanillamobs']);
+        parent::__construct('azm', 'AZVanillaMobs administration', '/azm <status [world]|reload>', ['azvanillamobs']);
         $this->setPermission('azvanillamobs.command.admin');
     }
 
@@ -36,7 +36,7 @@ final class AZVanillaMobsCommand extends Command implements PluginOwned
             return true;
         }
         if ($subcommand !== 'status') {
-            $sender->sendMessage('§eUsage: /azm <status|reload>');
+            $sender->sendMessage('§eUsage: /azm <status [world]|reload>');
             return false;
         }
 
@@ -55,7 +55,17 @@ final class AZVanillaMobsCommand extends Command implements PluginOwned
         $sender->sendMessage('§7Worlds: §f' . ($worldSummary === [] ? 'none scanned yet' : implode(', ', $worldSummary)));
         $sender->sendMessage('§7Rare: §f' . array_sum(is_array($status['rare'] ?? null) ? $status['rare'] : []) . ' §7| Natural despawns: §f' . (int)($status['despawned'] ?? 0) . ' §7| Last cycle: §f' . (float)($status['last-cycle-ms'] ?? 0.0) . ' ms');
 
-        $rejections = is_array($status['rejections'] ?? null) ? $status['rejections'] : [];
+        $worldFilter = isset($args[1]) ? trim((string)$args[1]) : null;
+        $store = $this->plugin->getSurvivalDataStore();
+        if ($store !== null && $store->isAvailable()) {
+            $telemetry = $store->getSpawnTelemetrySummary($worldFilter);
+            $scope = $worldFilter === null ? 'all worlds' : 'world ' . $worldFilter;
+            $sender->sendMessage('§7Persisted last 24h (' . $scope . '): §f' . $telemetry['attempts'] . ' attempts, ' . $telemetry['spawned'] . ' spawned, ' . $telemetry['rejected'] . ' rejected; average cycle §f' . $telemetry['average_ms'] . ' ms, max §f' . $telemetry['max_ms'] . ' ms.');
+            $rejections = $telemetry['rejections'];
+        } else {
+            $sender->sendMessage('§ePersistent telemetry is unavailable; showing in-memory counters only.');
+            $rejections = is_array($status['rejections'] ?? null) ? $status['rejections'] : [];
+        }
         arsort($rejections);
         $rejections = array_slice($rejections, 0, 5, true);
         if ($rejections !== []) {

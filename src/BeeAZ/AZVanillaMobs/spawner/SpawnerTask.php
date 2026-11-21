@@ -29,6 +29,8 @@ class SpawnerTask extends Task
     private int $successfulSpawns = 0;
     private int $failedSpawns = 0;
     private int $naturalDespawns = 0;
+    /** @var array<string, int> */
+    private array $pendingDespawnsByWorld = [];
     private int $lastCycleAttempts = 0;
     private int $lastCycleSpawns = 0;
     private float $lastCycleMilliseconds = 0.0;
@@ -74,6 +76,7 @@ class SpawnerTask extends Task
         $startedAt = microtime(true);
         $this->lastCycleAttempts = 0;
         $this->lastCycleSpawns = 0;
+        $this->lastCycleMilliseconds = 0.0;
         $this->refreshPopulationSnapshot($config, $worldsConfig);
         $globalCap = is_numeric($config['global-mob-cap'] ?? null)
             ? max(1, (int)$config['global-mob-cap'])
@@ -81,12 +84,17 @@ class SpawnerTask extends Task
 
         foreach ($dueWorlds as [$world, $dimension, $profile]) {
             $worldName = $world->getFolderName();
+            $worldStartedAt = microtime(true);
             $players = $world->getPlayers();
-            if ($players === []) {
+            $worldDespawns = $this->pendingDespawnsByWorld[$worldName] ?? 0;
+            unset($this->pendingDespawnsByWorld[$worldName]);
+            if ($players === [] && $worldDespawns === 0) {
                 continue;
             }
             $worldCap = (int)$profile->get('per-world-mob-cap');
             $worldAttempts = 0;
+            $worldSpawns = 0;
+            $worldRejections = [];
             $worldAttemptCap = (int)$profile->get('max-attempts-per-cycle');
             foreach ($players as $player) {
                 for ($attempt = 0; $attempt < (int)$profile->get('attempts-per-player'); ++$attempt) {
@@ -99,15 +107,27 @@ class SpawnerTask extends Task
                     if ($this->attemptSpawn($player, $dimension, $profile)) {
                         ++$this->lastCycleSpawns;
                         ++$this->successfulSpawns;
+                        ++$worldSpawns;
                     } else {
                         ++$this->failedSpawns;
                         $reason = $this->lastRejectionReason;
                         $this->rejections[$reason] = ($this->rejections[$reason] ?? 0) + 1;
+                        $worldRejections[$reason] = ($worldRejections[$reason] ?? 0) + 1;
                     }
                 }
             }
+            $worldMilliseconds = (microtime(true) - $worldStartedAt) * 1000.0;
+            $this->lastCycleMilliseconds += $worldMilliseconds;
+            $this->plugin->getSurvivalDataStore()?->recordSpawnCycle(
+                $worldName,
+                $worldAttempts,
+                $worldSpawns,
+                $worldDespawns,
+                $worldRejections,
+                $worldMilliseconds
+            );
         }
-        $this->lastCycleMilliseconds = (microtime(true) - $startedAt) * 1000.0;
+        $this->lastCycleMilliseconds = max($this->lastCycleMilliseconds, (microtime(true) - $startedAt) * 1000.0);
     }
 
     /** @param array<string, mixed> $config @param array<string, mixed> $worldsConfig */
@@ -144,6 +164,7 @@ class SpawnerTask extends Task
                     if ($nearestDistanceSquared >= $despawnDistanceSquared) {
                         $entity->flagForDespawn();
                         ++$this->naturalDespawns;
+                        $this->pendingDespawnsByWorld[$worldName] = ($this->pendingDespawnsByWorld[$worldName] ?? 0) + 1;
                         continue;
                     }
                 }
@@ -282,6 +303,26 @@ class SpawnerTask extends Task
             return $this->reject('category-disabled-or-empty');
         }
 
+        if ($biomeName === '') {
+            $biomeName = SpawnProfile::normalizeBiome($world->getBiome($x, $spawnY, $z)->getName());
+        }
+        $timeOfDay = (($world->getTimeOfDay() % 24000) + 24000) % 24000;
+        $timeBand = match (true) {
+            $timeOfDay >= 23000 => 'dawn',
+            $timeOfDay < 12000 => 'day',
+            $timeOfDay < 13000 => 'dusk',
+            default => 'night',
+        };
+        $isThundering = BeeAZ\AZVanillaMobs\listener\EventListener::isWorldThundering($world);
+        $isRaining = BeeAZ\AZVanillaMobs\listener\EventListener::isWorldRaining($world);
+        $spawnConditions = [
+            'time' => $timeBand,
+            'light' => $world->getBlockLightAt($x, $spawnY, $z),
+            'y' => $spawnY,
+            'weather' => $isThundering ? 'thunder' : ($isRaining ? 'rain' : 'clear'),
+            'ground' => $world->getBlockAt($x, $spawnY - 1, $z)->getName(),
+        ];
+
         $freshwaterMobs = [
             \BeeAZ\AZVanillaMobs\entity\overworld\Axolotl::class,
             \BeeAZ\AZVanillaMobs\entity\overworld\Tadpole::class,
@@ -307,6 +348,7 @@ class SpawnerTask extends Task
             $entityLimits = [];
         }
         $typeLimitRejected = false;
+        $conditionRejected = false;
         $time = $world->getTimeOfDay();
         $isNight = $time >= World::TIME_NIGHT && $time < World::TIME_SUNRISE;
         $sleepRules = $this->plugin->getConfig()->get('phantom-sleep', []);
@@ -324,6 +366,10 @@ class SpawnerTask extends Task
                 continue;
             }
             if ($profile->weight($mobName) <= 0 || !$profile->allowsBiome($mobName, $biomeName)) {
+                continue;
+            }
+            if (!$profile->allowsSpawnConditions($mobName, $spawnConditions)) {
+                $conditionRejected = true;
                 continue;
             }
 
@@ -363,7 +409,7 @@ class SpawnerTask extends Task
         }
 
         if ($weightedCandidates === []) {
-            return $this->reject($typeLimitRejected ? 'entity-type-cap' : 'no-mobs-match-world-rules');
+            return $this->reject($typeLimitRejected ? 'entity-type-cap' : ($conditionRejected ? 'no-mobs-match-spawn-conditions' : 'no-mobs-match-world-rules'));
         }
         $class = $this->chooseWeighted($weightedCandidates);
         if ($class === null) {
@@ -482,22 +528,60 @@ class SpawnerTask extends Task
         if ($chance <= 0.0 || mt_rand(1, 100000) > (int)round($chance * 100000)) {
             return;
         }
-        $healthMultiplier = is_numeric($settings['health-multiplier'] ?? null) ? max(1.0, min(5.0, (float)$settings['health-multiplier'])) : 1.5;
-        $damageMultiplier = is_numeric($settings['damage-multiplier'] ?? null) ? max(1.0, min(3.0, (float)$settings['damage-multiplier'])) : 1.15;
+
+        $archetypeId = 'legacy';
+        $archetype = [];
+        $archetypes = is_array($settings['archetypes'] ?? null) ? $settings['archetypes'] : [];
+        if ($archetypes !== []) {
+            $weights = [];
+            foreach ($archetypes as $id => $definition) {
+                if (!is_string($id) || !is_array($definition)) {
+                    continue;
+                }
+                $weight = $definition['weight'] ?? 1;
+                if (is_numeric($weight) && is_finite((float)$weight) && (float)$weight > 0.0) {
+                    $weights[$id] = max(0.0, min(1000.0, (float)$weight));
+                }
+            }
+            $selected = $this->chooseWeighted($weights);
+            if ($selected === null) {
+                return;
+            }
+            $archetypeId = (string)$selected;
+            $archetype = is_array($archetypes[$archetypeId] ?? null) ? $archetypes[$archetypeId] : [];
+        }
+        $healthSetting = $archetype['health-multiplier'] ?? $settings['health-multiplier'] ?? 1.5;
+        $damageSetting = $archetype['damage-multiplier'] ?? $settings['damage-multiplier'] ?? 1.15;
+        $healthMultiplier = is_numeric($healthSetting) ? max(1.0, min(5.0, (float)$healthSetting)) : 1.5;
+        $damageMultiplier = is_numeric($damageSetting) ? max(1.0, min(3.0, (float)$damageSetting)) : 1.15;
         $entity->setRareEncounter(true, $damageMultiplier);
+        $entity->setRareArchetype($archetypeId);
         $entity->setPersistenceRequired(true);
-        $bonusDrop = is_array($settings['bonus-drop'] ?? null) ? $settings['bonus-drop'] : [];
-        $entity->setRareBonusDrop([
-            'item' => is_string($bonusDrop['item'] ?? null) ? $bonusDrop['item'] : 'diamond',
-            'amount' => is_numeric($bonusDrop['amount'] ?? null) ? (int)$bonusDrop['amount'] : 1,
-            'chance' => is_numeric($bonusDrop['chance'] ?? null) ? (float)$bonusDrop['chance'] : 0.1,
-        ]);
+        $bonusSetting = array_key_exists('bonus-drop', $archetype) ? $archetype['bonus-drop'] : ($settings['bonus-drop'] ?? []);
+        if ($bonusSetting === false || $bonusSetting === null) {
+            $entity->setRareBonusDrop(null);
+        } else {
+            $bonusDrop = is_array($bonusSetting) ? $bonusSetting : [];
+            $entity->setRareBonusDrop([
+                'item' => is_string($bonusDrop['item'] ?? null) ? $bonusDrop['item'] : 'diamond',
+                'amount' => is_numeric($bonusDrop['amount'] ?? null) ? (int)$bonusDrop['amount'] : 1,
+                'chance' => is_numeric($bonusDrop['chance'] ?? null) ? (float)$bonusDrop['chance'] : 0.1,
+            ]);
+        }
         $entity->setMaxHealth(max(1, (int)ceil($entity->getMaxHealth() * $healthMultiplier)));
         $entity->setHealth($entity->getMaxHealth());
         if (($settings['visible-name'] ?? true) === true) {
-            $entity->setNameTag('§6Rare ' . $entity->getName());
+            $displayName = is_string($archetype['display-name'] ?? null) && trim($archetype['display-name']) !== ''
+                ? trim($archetype['display-name'])
+                : ($archetypeId === 'legacy' ? 'Rare' : ucfirst(str_replace(['_', '-'], ' ', $archetypeId)));
+            $entity->setNameTag('§6' . $displayName . ' §f' . $entity->getName());
             $entity->setNameTagVisible(true);
             $entity->setNameTagAlwaysVisible(true);
         }
+    }
+
+    public function flushMetrics(): void
+    {
+        $this->plugin->getSurvivalDataStore()?->flushSpawnMetrics();
     }
 }

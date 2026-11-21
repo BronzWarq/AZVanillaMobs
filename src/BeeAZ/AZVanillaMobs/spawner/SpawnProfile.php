@@ -55,6 +55,7 @@ final class SpawnProfile
             'slime' => ['swamp', 'mangrove_swamp'],
             'phantom' => ['*'],
         ],
+        'mob-conditions' => [],
         'rare-encounters' => [
             'enabled' => false,
             'chance' => 0.01,
@@ -118,6 +119,7 @@ final class SpawnProfile
         ));
         $values['mob-weights'] = is_array($values['mob-weights'] ?? null) ? $values['mob-weights'] : [];
         $values['mob-biomes'] = is_array($values['mob-biomes'] ?? null) ? $values['mob-biomes'] : [];
+        $values['mob-conditions'] = is_array($values['mob-conditions'] ?? null) ? $values['mob-conditions'] : [];
         $values['rare-encounters'] = is_array($values['rare-encounters'] ?? null)
             ? self::mergeValues(self::DEFAULTS['rare-encounters'], $values['rare-encounters'])
             : self::DEFAULTS['rare-encounters'];
@@ -175,6 +177,77 @@ final class SpawnProfile
             }
         }
         return false;
+    }
+
+    /** @param array{time?:string,light?:int,y?:int,weather?:string,ground?:string} $context */
+    public function allowsSpawnConditions(string $mobName, array $context): bool
+    {
+        $condition = $this->values['mob-conditions'][strtolower($mobName)] ?? null;
+        if ($condition === null) {
+            return true;
+        }
+        if (!is_array($condition)) {
+            return false;
+        }
+
+        if (isset($condition['time'])) {
+            $allowedTimes = is_array($condition['time']) ? $condition['time'] : [$condition['time']];
+            $currentTime = strtolower((string)($context['time'] ?? ''));
+            $allowedTimes = array_map(static fn(mixed $value): string => is_string($value) ? strtolower(trim($value)) : '', $allowedTimes);
+            if (!in_array($currentTime, $allowedTimes, true)) {
+                return false;
+            }
+        }
+
+        $light = $context['light'] ?? null;
+        foreach (['min-light' => true, 'max-light' => false] as $setting => $isMinimum) {
+            if (isset($condition[$setting])) {
+                if (!is_numeric($condition[$setting]) || !is_numeric($light)) {
+                    return false;
+                }
+                if ($isMinimum ? $light < (int)$condition[$setting] : $light > (int)$condition[$setting]) {
+                    return false;
+                }
+            }
+        }
+
+        $y = $context['y'] ?? null;
+        foreach (['min-y' => true, 'max-y' => false] as $setting => $isMinimum) {
+            if (isset($condition[$setting])) {
+                if (!is_numeric($condition[$setting]) || !is_numeric($y)) {
+                    return false;
+                }
+                if ($isMinimum ? $y < (int)$condition[$setting] : $y > (int)$condition[$setting]) {
+                    return false;
+                }
+            }
+        }
+
+        if (isset($condition['weather'])) {
+            $allowedWeather = is_array($condition['weather']) ? $condition['weather'] : [$condition['weather']];
+            $allowedWeather = array_map(static fn(mixed $value): string => is_string($value) ? strtolower(trim($value)) : '', $allowedWeather);
+            $weather = strtolower((string)($context['weather'] ?? 'clear'));
+            if (!in_array($weather, $allowedWeather, true) && !($weather === 'thunder' && in_array('rain', $allowedWeather, true))) {
+                return false;
+            }
+        }
+
+        if (isset($condition['ground-blocks'])) {
+            $allowedGround = is_array($condition['ground-blocks']) ? $condition['ground-blocks'] : [$condition['ground-blocks']];
+            $ground = self::normalizeBiome((string)($context['ground'] ?? ''));
+            $matched = false;
+            foreach ($allowedGround as $block) {
+                if (is_string($block) && fnmatch(self::normalizeBiome($block), $ground)) {
+                    $matched = true;
+                    break;
+                }
+            }
+            if (!$matched) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public static function normalizeBiome(string $name): string

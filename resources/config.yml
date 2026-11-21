@@ -69,6 +69,8 @@ spawn-profiles:
       goat: [stony_peaks, snowy_slopes, frozen_peaks, jagged_peaks]
       frog: [swamp, mangrove_swamp]
       slime: [swamp, mangrove_swamp]
+    # Optional per-mob spawn filters. Omitted fields are unrestricted.
+    mob-conditions: {}
     rare-encounters:
       enabled: false
       chance: 0.01
@@ -80,6 +82,27 @@ spawn-profiles:
         item: diamond
         amount: 1
         chance: 0.1
+      # Once rare encounters are enabled, a weighted archetype is selected
+      # for each encounter. Each may override the shared stats and bonus drop.
+      archetypes:
+        brute:
+          display-name: Ancient
+          weight: 3
+          health-multiplier: 2.0
+          damage-multiplier: 1.3
+          bonus-drop: {item: gold_ingot, amount: 2, chance: 0.5}
+        stalker:
+          display-name: Stalker
+          weight: 2
+          health-multiplier: 1.25
+          damage-multiplier: 1.7
+          bonus-drop: {item: emerald, amount: 1, chance: 0.35}
+        guardian:
+          display-name: Guardian
+          weight: 1
+          health-multiplier: 1.8
+          damage-multiplier: 1.15
+          bonus-drop: {item: diamond, amount: 1, chance: 0.75}
   sparse:
     interval-seconds: 8
     attempts-per-player: 1
@@ -92,8 +115,34 @@ spawn-profiles:
     disabled-mobs: []
     mob-weights: {}
     mob-biomes: {}
+    mob-conditions: {}
     rare-encounters:
       enabled: false
+
+# UUID-based kill tracking is limited to naturally spawned mobs by default.
+# Hunt badges are persistent, one-time milestones with no economy side effects.
+bestiary:
+  enabled: true
+  only-natural-kills: true
+  goals:
+    zombie_hunter:
+      title: Zombie Hunter
+      mob: zombie
+      target: 25
+    skeleton_hunter:
+      title: Skeleton Hunter
+      mob: skeleton
+      target: 25
+    desert_hunter:
+      title: Desert Hunter
+      mob: husk
+      biome: desert
+      target: 10
+    rare_hunter:
+      title: Rare Hunter
+      mob: '*'
+      target: 3
+      rare: true
 
 # Entity type limits (max number of specific mob types can spawn)
 entity-type-limits:
